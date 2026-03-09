@@ -569,7 +569,7 @@ async def set_user_role(call: CallbackQuery, callback_data: StarostaRoleCallback
     await _show_user_card(call.message, session, callback_data.student_id, edit=False)
 
 
-@router.callback_query(StarostaMenuCallback.filter(F.section == "noop", F.action == "noop"))
+@router.callback_query(StarostaMenuCallback.filter((F.section == "noop") & (F.action == "noop")))
 async def noop(call: CallbackQuery):
     await call.answer()
 
