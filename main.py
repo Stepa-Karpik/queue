@@ -4,7 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 
-from bot.handlers import start, profile, subjects, list_import, starosta
+from bot.handlers import start, profile, subjects, list_import, starosta, starosta_panel
 from bot.middlewares.db import DbSessionMiddleware
 from bot.utils.config import settings
 from bot.utils.db import engine, Base
@@ -44,6 +44,7 @@ async def main() -> None:
 
     dp.include_router(start.router)
     dp.include_router(profile.router)
+    dp.include_router(starosta_panel.router)
     dp.include_router(subjects.router)
     dp.include_router(list_import.router)
     dp.include_router(starosta.router)

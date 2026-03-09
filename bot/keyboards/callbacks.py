@@ -39,3 +39,34 @@ class AdminWorkCallback(CallbackData, prefix="admin_work"):
 
 class AddSubjectCallback(CallbackData, prefix="add_subject"):
     kind: str
+
+
+class StarostaMenuCallback(CallbackData, prefix="st_menu"):
+    section: str
+    action: str
+
+
+class StarostaSubjectCallback(CallbackData, prefix="st_subject"):
+    mode: str
+    group_subject_id: int
+
+
+class StarostaStudentCallback(CallbackData, prefix="st_student"):
+    mode: str
+    student_id: int
+
+
+class StarostaPageCallback(CallbackData, prefix="st_page"):
+    section: str
+    mode: str
+    page: int
+
+
+class StarostaRoleCallback(CallbackData, prefix="st_role"):
+    student_id: int
+    role: str
+
+
+class StarostaWorkCallback(CallbackData, prefix="st_work"):
+    action: str
+    number: int

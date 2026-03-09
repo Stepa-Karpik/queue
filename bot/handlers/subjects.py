@@ -168,8 +168,6 @@ async def show_subject_view(
     state_data = await state.get_data()
     list_msg_id = state_data.get("subject_list_message_id")
     actions_msg_id = state_data.get("subject_actions_message_id")
-    user = await get_user_by_tg(session, message.from_user.id)
-    is_starosta = bool(user and user.role == Role.STAROSTA.value)
 
     if edit_message:
         try:
@@ -206,7 +204,7 @@ async def show_subject_view(
         await state.update_data(subject_list_message_id=list_msg.message_id)
 
     actions_text = "Быстрые действия по дисциплине:"
-    actions_kb = subject_inline_actions_kb(is_starosta=is_starosta)
+    actions_kb = subject_inline_actions_kb()
     if actions_msg_id:
         try:
             await message.bot.edit_message_text(
@@ -502,9 +500,11 @@ async def priority_list(message: Message, session: AsyncSession, state: FSMConte
 
 
 @router.message(F.text.in_(BACK_ALIASES))
-async def back_to_menu(message: Message, state: FSMContext):
+async def back_to_menu(message: Message, state: FSMContext, session: AsyncSession):
     await state.clear()
-    await message.answer("Главное меню. Выберите раздел:", reply_markup=main_menu_kb())
+    user = await get_user_by_tg(session, message.from_user.id)
+    is_starosta = bool(user and user.role == Role.STAROSTA.value)
+    await message.answer("Главное меню. Выберите раздел:", reply_markup=main_menu_kb(is_starosta=is_starosta))
 
 
 @router.callback_query(ActionCallback.filter(F.name == "noop"))

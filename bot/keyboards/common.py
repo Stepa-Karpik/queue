@@ -23,6 +23,7 @@ BTN_PRACTICE = "📝 Практические"
 BTN_HELP = "ℹ️ Как пользоваться"
 BTN_BACK_MENU = "⬅️ Главное меню"
 BTN_PRIORITY = "📊 Очередность сдач"
+BTN_STAROSTA = "🛠 Староста"
 
 PROFILE_ALIASES = (BTN_PROFILE, "Профиль")
 LABS_ALIASES = (BTN_LABS, "Лабораторные работы")
@@ -30,14 +31,18 @@ PRACTICE_ALIASES = (BTN_PRACTICE, "Практические занятия")
 HELP_ALIASES = (BTN_HELP, "Помощь")
 BACK_ALIASES = (BTN_BACK_MENU, "Назад")
 PRIORITY_ALIASES = (BTN_PRIORITY, "Очередность сдач")
+STAROSTA_ALIASES = (BTN_STAROSTA, "Староста")
 
 
-def main_menu_kb() -> ReplyKeyboardMarkup:
+def main_menu_kb(is_starosta: bool = False) -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton(text=BTN_LABS), KeyboardButton(text=BTN_PRACTICE)],
+        [KeyboardButton(text=BTN_PROFILE), KeyboardButton(text=BTN_HELP)],
+    ]
+    if is_starosta:
+        keyboard.append([KeyboardButton(text=BTN_STAROSTA)])
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_LABS), KeyboardButton(text=BTN_PRACTICE)],
-            [KeyboardButton(text=BTN_PROFILE), KeyboardButton(text=BTN_HELP)],
-        ],
+        keyboard=keyboard,
         resize_keyboard=True,
     )
 
@@ -115,25 +120,12 @@ def students_kb(items: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def subject_inline_actions_kb(is_starosta: bool = False) -> InlineKeyboardMarkup:
+def subject_inline_actions_kb() -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="↕️ Изменить сортировку", callback_data=ActionCallback(name="sort").pack())],
         [InlineKeyboardButton(text="✅ Отметить сдачу", callback_data=ActionCallback(name="mark").pack())],
         [InlineKeyboardButton(text="📈 Моя статистика", callback_data=ActionCallback(name="stats").pack())],
     ]
-    if is_starosta:
-        rows.extend(
-            [
-                [
-                    InlineKeyboardButton(text="➕ Работа", callback_data=ActionCallback(name="admin_add_work").pack()),
-                    InlineKeyboardButton(text="➖ Работа", callback_data=ActionCallback(name="admin_remove_work").pack()),
-                ],
-                [
-                    InlineKeyboardButton(text="➕ Дисциплина", callback_data=ActionCallback(name="admin_add_subject").pack()),
-                    InlineKeyboardButton(text="🗑 Дисциплина", callback_data=ActionCallback(name="admin_remove_subject").pack()),
-                ],
-            ]
-        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

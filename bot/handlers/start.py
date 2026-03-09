@@ -21,9 +21,10 @@ router = Router()
 async def start_handler(message: Message, state: FSMContext, session: AsyncSession):
     user = await get_user_by_tg(session, message.from_user.id)
     if user and user.student_id:
+        is_starosta = user.role == Role.STAROSTA.value
         await message.answer(
             "Вы уже зарегистрированы.\nВыберите действие в меню ниже.",
-            reply_markup=main_menu_kb(),
+            reply_markup=main_menu_kb(is_starosta=is_starosta),
         )
         return
     await state.clear()
@@ -108,7 +109,7 @@ async def confirm_student(call: CallbackQuery, callback_data: ConfirmCallback, s
     )
     await call.message.answer(
         "Регистрация успешна.\nВыберите действие в меню.",
-        reply_markup=main_menu_kb(),
+        reply_markup=main_menu_kb(is_starosta=False),
     )
     await state.clear()
 
@@ -181,7 +182,7 @@ async def self_starosta_confirm(call: CallbackQuery, callback_data: ConfirmCallb
     )
     await call.message.answer(
         "Регистрация завершена.\nТеперь можно работать через кнопки меню.",
-        reply_markup=main_menu_kb(),
+        reply_markup=main_menu_kb(is_starosta=role == Role.STAROSTA),
     )
     await state.clear()
 
@@ -198,6 +199,7 @@ async def help_handler(message: Message, session: AsyncSession):
         "4. Кнопка «⬅️ Главное меню» всегда возвращает на стартовый экран.",
     ]
     if user and user.role == Role.STAROSTA.value:
-        lines.append("5. Для старосты в дисциплине доступны кнопки добавления/удаления работ и дисциплин.")
+        lines.append("5. Кнопка «🛠 Староста» открывает режим управления дисциплинами и пользователями.")
         lines.append("6. Команда /list загружает список группы.")
-    await message.answer("\n".join(lines), reply_markup=main_menu_kb())
+    is_starosta = bool(user and user.role == Role.STAROSTA.value)
+    await message.answer("\n".join(lines), reply_markup=main_menu_kb(is_starosta=is_starosta))

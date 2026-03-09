@@ -32,4 +32,4 @@ async def profile_handler(message: Message, session: AsyncSession):
         f"• Факультет: {faculty}\n"
         f"• Роль: {role}"
     )
-    await message.answer(text, reply_markup=main_menu_kb())
+    await message.answer(text, reply_markup=main_menu_kb(is_starosta=user.role == Role.STAROSTA.value))
