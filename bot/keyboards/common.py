@@ -17,13 +17,26 @@ from bot.keyboards.callbacks import (
     AddSubjectCallback,
 )
 
+BTN_PROFILE = "👤 Профиль"
+BTN_LABS = "🧪 Лабораторные"
+BTN_PRACTICE = "📝 Практические"
+BTN_HELP = "ℹ️ Как пользоваться"
+BTN_BACK_MENU = "⬅️ Главное меню"
+BTN_PRIORITY = "📊 Очередность сдач"
+
+PROFILE_ALIASES = (BTN_PROFILE, "Профиль")
+LABS_ALIASES = (BTN_LABS, "Лабораторные работы")
+PRACTICE_ALIASES = (BTN_PRACTICE, "Практические занятия")
+HELP_ALIASES = (BTN_HELP, "Помощь")
+BACK_ALIASES = (BTN_BACK_MENU, "Назад")
+PRIORITY_ALIASES = (BTN_PRIORITY, "Очередность сдач")
+
 
 def main_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Профиль")],
-            [KeyboardButton(text="Лабораторные работы")],
-            [KeyboardButton(text="Практические занятия")],
+            [KeyboardButton(text=BTN_LABS), KeyboardButton(text=BTN_PRACTICE)],
+            [KeyboardButton(text=BTN_PROFILE), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
     )
@@ -31,7 +44,7 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
 
 def back_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Назад")]],
+        keyboard=[[KeyboardButton(text=BTN_BACK_MENU)]],
         resize_keyboard=True,
     )
 
@@ -39,8 +52,8 @@ def back_kb() -> ReplyKeyboardMarkup:
 def subject_actions_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Назад")],
-            [KeyboardButton(text="Очередность сдач")],
+            [KeyboardButton(text=BTN_PRIORITY)],
+            [KeyboardButton(text=BTN_BACK_MENU)],
         ],
         resize_keyboard=True,
     )
@@ -74,8 +87,8 @@ def subjects_kb(items: list[tuple[int, str, str]]) -> InlineKeyboardMarkup:
 def sort_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="По алфавиту", callback_data=SortCallback(by="alpha").pack())],
-            [InlineKeyboardButton(text="По количеству сданных", callback_data=SortCallback(by="count").pack())],
+            [InlineKeyboardButton(text="По фамилии (А-Я)", callback_data=SortCallback(by="alpha").pack())],
+            [InlineKeyboardButton(text="По прогрессу (сначала активные)", callback_data=SortCallback(by="count").pack())],
         ]
     )
 
@@ -90,7 +103,7 @@ def works_kb(numbers: list[int]) -> InlineKeyboardMarkup:
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="Назад", callback_data=ActionCallback(name="work_back").pack())])
+    rows.append([InlineKeyboardButton(text="⬅️ К дисциплине", callback_data=ActionCallback(name="work_back").pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -102,31 +115,33 @@ def students_kb(items: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def subject_inline_actions_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Сортировка", callback_data=ActionCallback(name="sort").pack())],
-            [InlineKeyboardButton(text="Отметить сдачу", callback_data=ActionCallback(name="mark").pack())],
-            [InlineKeyboardButton(text="Моя статистика", callback_data=ActionCallback(name="stats").pack())],
-        ]
-    )
+def subject_inline_actions_kb(is_starosta: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="↕️ Изменить сортировку", callback_data=ActionCallback(name="sort").pack())],
+        [InlineKeyboardButton(text="✅ Отметить сдачу", callback_data=ActionCallback(name="mark").pack())],
+        [InlineKeyboardButton(text="📈 Моя статистика", callback_data=ActionCallback(name="stats").pack())],
+    ]
+    if is_starosta:
+        rows.extend(
+            [
+                [
+                    InlineKeyboardButton(text="➕ Работа", callback_data=ActionCallback(name="admin_add_work").pack()),
+                    InlineKeyboardButton(text="➖ Работа", callback_data=ActionCallback(name="admin_remove_work").pack()),
+                ],
+                [
+                    InlineKeyboardButton(text="➕ Дисциплина", callback_data=ActionCallback(name="admin_add_subject").pack()),
+                    InlineKeyboardButton(text="🗑 Дисциплина", callback_data=ActionCallback(name="admin_remove_subject").pack()),
+                ],
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def score_optional_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Без балла", callback_data=ActionCallback(name="no_score").pack())],
-        ]
-    )
-
-
-def admin_subject_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Добавить дисциплину", callback_data=ActionCallback(name="admin_add_subject").pack())],
-            [InlineKeyboardButton(text="Добавить работу", callback_data=ActionCallback(name="admin_add_work").pack())],
-            [InlineKeyboardButton(text="Удалить работу", callback_data=ActionCallback(name="admin_remove_work").pack())],
-            [InlineKeyboardButton(text="Удалить дисциплину", callback_data=ActionCallback(name="admin_remove_subject").pack())],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=ActionCallback(name="cancel_score").pack())],
         ]
     )
 
@@ -134,8 +149,8 @@ def admin_subject_kb() -> InlineKeyboardMarkup:
 def admin_add_subject_kind_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Лабораторные", callback_data=AddSubjectCallback(kind="lab").pack())],
-            [InlineKeyboardButton(text="Практические", callback_data=AddSubjectCallback(kind="practice").pack())],
+            [InlineKeyboardButton(text="🧪 Лабораторные", callback_data=AddSubjectCallback(kind="lab").pack())],
+            [InlineKeyboardButton(text="📝 Практические", callback_data=AddSubjectCallback(kind="practice").pack())],
         ]
     )
 
@@ -147,15 +162,17 @@ def pagination_kb(action: str, page: int, total_pages: int) -> InlineKeyboardMar
     if page > 1:
         row.append(
             InlineKeyboardButton(
-                text="◀",
+                text="◀️",
                 callback_data=PageCallback(action=action, page=page - 1).pack(),
             )
         )
-    row.append(InlineKeyboardButton(text=f"Стр. {page}/{total_pages}", callback_data=ActionCallback(name="noop").pack()))
+    row.append(
+        InlineKeyboardButton(text=f"Страница {page}/{total_pages}", callback_data=ActionCallback(name="noop").pack())
+    )
     if page < total_pages:
         row.append(
             InlineKeyboardButton(
-                text="▶",
+                text="▶️",
                 callback_data=PageCallback(action=action, page=page + 1).pack(),
             )
         )
@@ -175,6 +192,7 @@ def students_paginated_kb(
     nav = pagination_kb(action, page, total_pages)
     if nav:
         rows.extend(nav.inline_keyboard)
+    rows.append([InlineKeyboardButton(text="⬅️ К дисциплине", callback_data=ActionCallback(name="mark_back").pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -193,4 +211,5 @@ def admin_remove_works_kb(numbers: list[int]) -> InlineKeyboardMarkup:
             row = []
     if row:
         rows.append(row)
+    rows.append([InlineKeyboardButton(text="⬅️ К дисциплине", callback_data=ActionCallback(name="work_back").pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)

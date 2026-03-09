@@ -1,10 +1,10 @@
 ﻿from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.keyboards.common import confirm_kb, main_menu_kb
+from bot.keyboards.common import HELP_ALIASES, confirm_kb, main_menu_kb
 from bot.models import Role
 from bot.services.students import find_students_by_last_name, find_student_by_full_name, get_student_group
 from bot.services.roster import get_or_create_faculty, get_or_create_group
@@ -21,10 +21,17 @@ router = Router()
 async def start_handler(message: Message, state: FSMContext, session: AsyncSession):
     user = await get_user_by_tg(session, message.from_user.id)
     if user and user.student_id:
-        await message.answer("Вы уже зарегистрированы.", reply_markup=main_menu_kb())
+        await message.answer(
+            "Вы уже зарегистрированы.\nВыберите действие в меню ниже.",
+            reply_markup=main_menu_kb(),
+        )
         return
     await state.clear()
-    await message.answer("Приветствую! Введите вашу фамилию. Регистр не имеет значения.")
+    await message.answer(
+        "Добро пожаловать.\n"
+        "Шаг 1 из 3: введите вашу фамилию.\n"
+        "Регистр не важен.",
+    )
     await state.set_state(RegistrationStates.waiting_last_name)
 
 
@@ -33,14 +40,14 @@ async def last_name_handler(message: Message, state: FSMContext, session: AsyncS
     students = await find_students_by_last_name(session, message.text)
     if not students:
         await message.answer(
-            "Фамилия не найдена в списке. "
+            "Фамилия не найдена в списке.\n"
             "Введите полное ФИО для самостоятельной регистрации."
         )
         await state.set_state(RegistrationStates.waiting_self_full_name)
         return
     if len(students) > 1:
         names = "\n".join(format_full_name(s.last_name, s.first_name, s.middle_name) for s in students)
-        await message.answer(f"Найдено несколько студентов:\n{names}\nВведите полное ФИО.")
+        await message.answer(f"Найдено несколько совпадений:\n{names}\n\nВведите полное ФИО полностью.")
         await state.set_state(RegistrationStates.waiting_full_name)
         return
 
@@ -58,7 +65,7 @@ async def full_name_handler(message: Message, state: FSMContext, session: AsyncS
     students = await find_student_by_full_name(session, message.text)
     if not students:
         await message.answer(
-            "Студент не найден в списке. "
+            "Студент не найден в списке.\n"
             "Перейдём к самостоятельной регистрации. Введите полное ФИО."
         )
         await state.set_state(RegistrationStates.waiting_self_full_name)
@@ -99,7 +106,10 @@ async def confirm_student(call: CallbackQuery, callback_data: ConfirmCallback, s
         student_id=student_id,
         role=Role.STUDENT,
     )
-    await call.message.answer("Регистрация успешна!", reply_markup=main_menu_kb())
+    await call.message.answer(
+        "Регистрация успешна.\nВыберите действие в меню.",
+        reply_markup=main_menu_kb(),
+    )
     await state.clear()
 
 
@@ -108,17 +118,20 @@ async def self_full_name(message: Message, state: FSMContext):
     try:
         last, first, middle = split_full_name(message.text)
     except ValueError:
-        await message.answer("Введите ФИО в формате: Фамилия Имя Отчество (отчество необязательно).")
+        await message.answer(
+            "Неверный формат.\n"
+            "Введите ФИО так: Фамилия Имя Отчество (отчество необязательно)."
+        )
         return
     await state.update_data(self_last=last, self_first=first, self_middle=middle)
-    await message.answer("Введите факультет:")
+    await message.answer("Шаг 2 из 3: введите факультет.")
     await state.set_state(RegistrationStates.waiting_self_faculty)
 
 
 @router.message(RegistrationStates.waiting_self_faculty)
 async def self_faculty(message: Message, state: FSMContext):
     await state.update_data(self_faculty=normalize_name(message.text))
-    await message.answer("Введите группу:")
+    await message.answer("Шаг 3 из 3: введите группу.")
     await state.set_state(RegistrationStates.waiting_self_group)
 
 
@@ -166,5 +179,25 @@ async def self_starosta_confirm(call: CallbackQuery, callback_data: ConfirmCallb
         student_id=student.id,
         role=role,
     )
-    await call.message.answer("Регистрация завершена!", reply_markup=main_menu_kb())
+    await call.message.answer(
+        "Регистрация завершена.\nТеперь можно работать через кнопки меню.",
+        reply_markup=main_menu_kb(),
+    )
     await state.clear()
+
+
+@router.message(Command("help"))
+@router.message(F.text.in_(HELP_ALIASES))
+async def help_handler(message: Message, session: AsyncSession):
+    user = await get_user_by_tg(session, message.from_user.id)
+    lines = [
+        "Как пользоваться ботом:",
+        "1. Нажмите «🧪 Лабораторные» или «📝 Практические».",
+        "2. Выберите дисциплину.",
+        "3. Внутри дисциплины используйте кнопки: сортировка, отметка сдачи, статистика.",
+        "4. Кнопка «⬅️ Главное меню» всегда возвращает на стартовый экран.",
+    ]
+    if user and user.role == Role.STAROSTA.value:
+        lines.append("5. Для старосты в дисциплине доступны кнопки добавления/удаления работ и дисциплин.")
+        lines.append("6. Команда /list загружает список группы.")
+    await message.answer("\n".join(lines), reply_markup=main_menu_kb())

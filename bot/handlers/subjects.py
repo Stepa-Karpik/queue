@@ -1,14 +1,18 @@
 ﻿from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards.common import (
+    BACK_ALIASES,
+    LABS_ALIASES,
+    PRACTICE_ALIASES,
+    PRIORITY_ALIASES,
     main_menu_kb,
     subjects_kb,
     subject_actions_kb,
     subject_inline_actions_kb,
-    admin_subject_kb,
     admin_add_subject_kind_kb,
     sort_kb,
     works_kb,
@@ -58,12 +62,12 @@ router = Router()
 PAGE_SIZE = 5
 
 
-@router.message(F.text == "Лабораторные работы")
+@router.message(F.text.in_(LABS_ALIASES))
 async def labs_handler(message: Message, session: AsyncSession, state: FSMContext):
     await show_subjects(message, session, state, SubjectKind.LAB)
 
 
-@router.message(F.text == "Практические занятия")
+@router.message(F.text.in_(PRACTICE_ALIASES))
 async def practice_handler(message: Message, session: AsyncSession, state: FSMContext):
     await show_subjects(message, session, state, SubjectKind.PRACTICE)
 
@@ -88,7 +92,11 @@ async def show_subjects(message: Message, session: AsyncSession, state: FSMConte
         return
 
     await state.update_data(kind=kind.value)
-    await message.answer("Выберите дисциплину", reply_markup=subjects_kb(items))
+    await message.answer(
+        "Выберите дисциплину из списка ниже.\n"
+        "После выбора откроется журнал группы и быстрые действия.",
+        reply_markup=subjects_kb(items),
+    )
 
 
 @router.callback_query(SubjectCallback.filter())
@@ -135,52 +143,97 @@ async def show_subject_view(
         page = total_pages
     start = (page - 1) * PAGE_SIZE
     end = start + PAGE_SIZE
+    await state.update_data(page_subject=page)
 
-    lines = [f"Дисциплина: {gs.subject.name}", f"Стр. {page}/{total_pages}\n"]
-    for idx, student in enumerate(students[start:end], start=start + 1):
-        full_name = format_full_name(student.last_name, student.first_name, student.middle_name)
-        submitted = subs_map.get(student.id, [])
-        lines.append(f"{idx}. {full_name} ({len(submitted)}/{total})")
-        lines.append(render_work_row(total, submitted))
+    lines = [
+        f"📘 Дисциплина: {gs.subject.name}",
+        f"👥 Студентов: {total_students} | Работ: {total}",
+        f"📄 Страница {page}/{total_pages}",
+        "",
+    ]
+    if students[start:end]:
+        for idx, student in enumerate(students[start:end], start=start + 1):
+            full_name = format_full_name(student.last_name, student.first_name, student.middle_name)
+            submitted = subs_map.get(student.id, [])
+            lines.append(f"{idx}. {full_name} — {len(submitted)}/{total}")
+            lines.append(render_work_row(total, submitted))
+    else:
+        lines.append("В группе пока нет студентов.")
+    lines.append("")
+    lines.append("Легенда: 🟩 — сдано, цифра — номер несданной работы.")
 
     page_kb = pagination_kb("subject", page, total_pages)
     text = "\n".join(lines)
 
+    state_data = await state.get_data()
+    list_msg_id = state_data.get("subject_list_message_id")
+    actions_msg_id = state_data.get("subject_actions_message_id")
+    user = await get_user_by_tg(session, message.from_user.id)
+    is_starosta = bool(user and user.role == Role.STAROSTA.value)
+
     if edit_message:
         try:
             await edit_message.edit_text(text, reply_markup=page_kb)
+            await state.update_data(subject_list_message_id=edit_message.message_id)
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc):
+                pass
+            else:
+                list_msg = await message.answer(text, reply_markup=page_kb)
+                await state.update_data(subject_list_message_id=list_msg.message_id)
         except Exception:
-            await message.answer(text, reply_markup=page_kb)
+            list_msg = await message.answer(text, reply_markup=page_kb)
+            await state.update_data(subject_list_message_id=list_msg.message_id)
+    elif list_msg_id:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=list_msg_id,
+                text=text,
+                reply_markup=page_kb,
+            )
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc):
+                pass
+            else:
+                list_msg = await message.answer(text, reply_markup=page_kb)
+                await state.update_data(subject_list_message_id=list_msg.message_id)
+        except Exception:
+            list_msg = await message.answer(text, reply_markup=page_kb)
+            await state.update_data(subject_list_message_id=list_msg.message_id)
     else:
         list_msg = await message.answer(text, reply_markup=page_kb)
         await state.update_data(subject_list_message_id=list_msg.message_id)
-        await message.answer("Действия:", reply_markup=subject_inline_actions_kb())
-        await message.answer("Меню", reply_markup=subject_actions_kb())
 
-    user = await get_user_by_tg(session, message.from_user.id)
-    if user and user.role == Role.STAROSTA.value:
-        data = await state.get_data()
-        admin_msg_id = data.get("admin_menu_message_id")
-        if admin_msg_id:
-            try:
-                await message.bot.edit_message_text(
-                    chat_id=message.chat.id,
-                    message_id=admin_msg_id,
-                    text="Управление дисциплиной:",
-                    reply_markup=admin_subject_kb(),
-                )
-            except Exception:
-                admin_msg = await message.answer("Управление дисциплиной:", reply_markup=admin_subject_kb())
-                await state.update_data(admin_menu_message_id=admin_msg.message_id)
-        else:
-            admin_msg = await message.answer("Управление дисциплиной:", reply_markup=admin_subject_kb())
-            await state.update_data(admin_menu_message_id=admin_msg.message_id)
+    actions_text = "Быстрые действия по дисциплине:"
+    actions_kb = subject_inline_actions_kb(is_starosta=is_starosta)
+    if actions_msg_id:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=actions_msg_id,
+                text=actions_text,
+                reply_markup=actions_kb,
+            )
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc):
+                pass
+            else:
+                actions_msg = await message.answer(actions_text, reply_markup=actions_kb)
+                await state.update_data(subject_actions_message_id=actions_msg.message_id)
+        except Exception:
+            actions_msg = await message.answer(actions_text, reply_markup=actions_kb)
+            await state.update_data(subject_actions_message_id=actions_msg.message_id)
+    else:
+        actions_msg = await message.answer(actions_text, reply_markup=actions_kb)
+        await state.update_data(subject_actions_message_id=actions_msg.message_id)
+        await message.answer("Навигация:", reply_markup=subject_actions_kb())
 
 
 @router.callback_query(ActionCallback.filter(F.name == "sort"))
 async def sort_action(call: CallbackQuery, state: FSMContext):
     await call.answer()
-    await call.message.answer("Выберите сортировку", reply_markup=sort_kb())
+    await call.message.answer("Выберите способ сортировки списка:", reply_markup=sort_kb())
 
 
 @router.callback_query(SortCallback.filter())
@@ -217,7 +270,7 @@ async def mark_action(call: CallbackQuery, session: AsyncSession, state: FSMCont
     else:
         await state.update_data(mark_for_student=user.student_id)
         numbers = await list_active_work_numbers(session, group_subject_id)
-        await call.message.answer("Выберите номер работы:", reply_markup=works_kb(numbers))
+        await call.message.answer("Выберите номер работы для отметки:", reply_markup=works_kb(numbers))
         await state.set_state(SubjectStates.marking_work)
 
 
@@ -231,7 +284,7 @@ async def mark_select_student(call: CallbackQuery, callback_data: StudentCallbac
         return
     await state.update_data(mark_for_student=callback_data.student_id)
     numbers = await list_active_work_numbers(session, group_subject_id)
-    await call.message.answer("Выберите номер работы:", reply_markup=works_kb(numbers))
+    await call.message.answer("Выберите номер работы для отметки:", reply_markup=works_kb(numbers))
     await state.set_state(SubjectStates.marking_work)
 
 
@@ -258,7 +311,11 @@ async def mark_work_number(call: CallbackQuery, callback_data: WorkCallback, ses
         return
 
     await state.update_data(work_number=callback_data.number)
-    await call.message.answer("Введите балл (0-100) или нажмите «Без балла».", reply_markup=score_optional_kb())
+    await call.message.answer(
+        "Введите балл от 0 до 100.\n"
+        "Если оценка не нужна, нажмите «Без балла».",
+        reply_markup=score_optional_kb(),
+    )
     await state.set_state(SubjectStates.entering_score)
 
 
@@ -421,7 +478,7 @@ async def admin_remove_subject_confirm(call: CallbackQuery, callback_data: Confi
     await state.clear()
 
 
-@router.message(F.text == "Очередность сдач")
+@router.message(F.text.in_(PRIORITY_ALIASES))
 async def priority_list(message: Message, session: AsyncSession, state: FSMContext):
     data = await state.get_data()
     group_subject_id = data.get("group_subject_id")
@@ -433,21 +490,21 @@ async def priority_list(message: Message, session: AsyncSession, state: FSMConte
         await message.answer("Нет данных для очередности.")
         return
 
-    lines = ["Очередность сдач (по убыванию приоритета):"]
+    lines = ["📊 Очередность сдач (по убыванию приоритета):", ""]
     for idx, item in enumerate(items, start=1):
         percent = int(item["priority"] * 100)
         lines.append(f"{idx}. {item['full_name']}")
         lines.append(
-            f"приоритет {percent}% (сдано - {item['completed']}/{item['total']}, средний балл - {int(item['avg_score'])} )"
+            f"приоритет {percent}% | сдано {item['completed']}/{item['total']} | средний балл {int(item['avg_score'])}"
         )
         lines.append("")
     await message.answer("\n".join(lines).strip())
 
 
-@router.message(F.text == "Назад")
+@router.message(F.text.in_(BACK_ALIASES))
 async def back_to_menu(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("Главное меню", reply_markup=main_menu_kb())
+    await message.answer("Главное меню. Выберите раздел:", reply_markup=main_menu_kb())
 
 
 @router.callback_query(ActionCallback.filter(F.name == "noop"))
@@ -457,6 +514,12 @@ async def noop_callback(call: CallbackQuery):
 
 @router.callback_query(ActionCallback.filter(F.name == "work_back"))
 async def work_back(call: CallbackQuery, session: AsyncSession, state: FSMContext):
+    await call.answer()
+    await show_subject_view(call.message, session, state)
+
+
+@router.callback_query(ActionCallback.filter(F.name == "mark_back"))
+async def mark_back(call: CallbackQuery, session: AsyncSession, state: FSMContext):
     await call.answer()
     await show_subject_view(call.message, session, state)
 
@@ -477,6 +540,14 @@ async def no_score_submit(call: CallbackQuery, session: AsyncSession, state: FSM
         await call.message.answer("Эта работа уже отмечена. Отмена невозможна.")
     else:
         await call.message.answer("Сдача зафиксирована без балла.")
+    await show_subject_view(call.message, session, state)
+    await state.set_state(SubjectStates.viewing_subject)
+
+
+@router.callback_query(ActionCallback.filter(F.name == "cancel_score"))
+async def cancel_score_submit(call: CallbackQuery, session: AsyncSession, state: FSMContext):
+    await call.answer()
+    await call.message.answer("Отметка отменена.")
     await show_subject_view(call.message, session, state)
     await state.set_state(SubjectStates.viewing_subject)
 
@@ -503,7 +574,7 @@ async def show_student_selection(message: Message, session: AsyncSession, state:
         for s in students[start:end]
     ]
     await message.answer(
-        "Выберите студента:",
+        "Выберите студента для отметки:",
         reply_markup=students_paginated_kb(items, "mark", page, total_pages),
     )
 
