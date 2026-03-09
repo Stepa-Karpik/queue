@@ -1,8 +1,10 @@
-﻿import asyncio
+import asyncio
 import logging
 
+import asyncpg
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
+from sqlalchemy.engine.url import make_url
 
 from bot.handlers import start, profile, subjects, list_import, starosta, starosta_panel
 from bot.middlewares.db import DbSessionMiddleware
@@ -24,7 +26,33 @@ async def wait_for_db(retries: int = 10, delay: float = 1.5) -> None:
         raise last_exc
 
 
+def _quote_ident(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+async def ensure_database_exists() -> None:
+    db_url = make_url(settings.database_url)
+    target_db = db_url.database
+    if not target_db:
+        return
+
+    conn = await asyncpg.connect(
+        user=db_url.username,
+        password=db_url.password,
+        host=db_url.host or "localhost",
+        port=db_url.port or 5432,
+        database="postgres",
+    )
+    try:
+        exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", target_db)
+        if not exists:
+            await conn.execute(f"CREATE DATABASE {_quote_ident(target_db)}")
+    finally:
+        await conn.close()
+
+
 async def on_startup() -> None:
+    await ensure_database_exists()
     await wait_for_db()
 
 
