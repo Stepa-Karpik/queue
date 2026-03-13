@@ -70,3 +70,43 @@ class StarostaRoleCallback(CallbackData, prefix="st_role"):
 class StarostaWorkCallback(CallbackData, prefix="st_work"):
     action: str
     number: int
+
+
+class ManageMenuCallback(CallbackData, prefix="mg_menu"):
+    section: str
+    action: str
+
+
+class ManageStudentCallback(CallbackData, prefix="mg_student"):
+    action: str
+    student_id: int
+
+
+class ManageSubjectCallback(CallbackData, prefix="mg_subject"):
+    action: str
+    group_subject_id: int
+
+
+class ManagePageCallback(CallbackData, prefix="mg_page"):
+    section: str
+    page: int
+
+
+class ManageRoleCallback(CallbackData, prefix="mg_role"):
+    student_id: int
+    role: str
+
+
+class ManageSubmissionCallback(CallbackData, prefix="mg_submit"):
+    action: str
+    value: int
+
+
+class AdminPanelCallback(CallbackData, prefix="ad_panel"):
+    action: str
+    value: str
+
+
+class ScheduleCallback(CallbackData, prefix="schedule"):
+    action: str
+    value: str

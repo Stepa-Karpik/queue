@@ -19,3 +19,10 @@ def format_full_name(last: str, first: str, middle: str | None) -> str:
     if middle:
         return f"{last} {first} {middle}"
     return f"{last} {first}"
+
+
+def format_short_name(last: str, first: str, middle: str | None) -> str:
+    initials = [f"{first[0]}."]
+    if middle:
+        initials.append(f"{middle[0]}.")
+    return f"{last} {' '.join(initials)}"

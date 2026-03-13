@@ -3,8 +3,7 @@
 from typing import Iterable
 
 
-def render_work_row(total: int, submitted: Iterable[int]) -> str:
-    submitted_set = set(submitted)
+def keycap_number(number: int) -> str:
     keycaps = {
         1: "1️⃣",
         2: "2️⃣",
@@ -17,13 +16,29 @@ def render_work_row(total: int, submitted: Iterable[int]) -> str:
         9: "9️⃣",
         10: "🔟",
     }
+    return keycaps.get(number, str(number))
+
+
+def render_work_row(work_numbers: Iterable[int], submitted: Iterable[int]) -> str:
+    submitted_set = set(submitted)
     items = []
-    for i in range(1, total + 1):
-        if i in submitted_set:
+    for number in work_numbers:
+        if number in submitted_set:
             items.append("🟩")
         else:
-            items.append(keycaps.get(i, str(i)))
+            items.append(keycap_number(number))
     return " ".join(items)
+
+
+def render_progress_bar(completed: int, total: int, width: int = 6) -> str:
+    if total <= 0:
+        return "░" * width
+
+    filled = round((completed / total) * width)
+    if completed > 0:
+        filled = max(1, filled)
+    filled = min(width, max(0, filled))
+    return f"{'█' * filled}{'░' * (width - filled)}"
 
 
 def score_to_grade(avg_score: float) -> int:

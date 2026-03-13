@@ -6,15 +6,19 @@ from sqlalchemy import select, func, outerjoin
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.models import GroupSubject, Student, Submission, SubjectWork
+from bot.utils.names import format_full_name, format_short_name
 
 
 class PriorityResult(dict):
     student_id: int
     full_name: str
+    short_name: str
     priority: float
+    is_inactive: bool
     completed: int
     total: int
     avg_score: float
+    scored_count: int
     last_submission_at: datetime | None
 
 
@@ -83,6 +87,7 @@ async def get_priority_list(session: AsyncSession, group_subject_id: int) -> lis
             Submission.student_id.label("student_id"),
             func.count(Submission.id).label("completed"),
             func.avg(Submission.score).label("avg_score"),
+            func.count(Submission.score).label("scored_count"),
             func.max(Submission.submitted_at).label("last_submission_at"),
         )
         .where(Submission.group_subject_id == group_subject_id)
@@ -96,8 +101,10 @@ async def get_priority_list(session: AsyncSession, group_subject_id: int) -> lis
             Student.last_name,
             Student.first_name,
             Student.middle_name,
+            Student.is_inactive,
             submissions_subq.c.completed,
             submissions_subq.c.avg_score,
+            submissions_subq.c.scored_count,
             submissions_subq.c.last_submission_at,
         )
         .select_from(
@@ -112,20 +119,25 @@ async def get_priority_list(session: AsyncSession, group_subject_id: int) -> lis
     for row in result.all():
         completed = int(row.completed or 0)
         avg_score = float(row.avg_score or 0.0)
+        scored_count = int(row.scored_count or 0)
         last_submission_at = row.last_submission_at
-        full_name = " ".join(filter(None, [row.last_name, row.first_name, row.middle_name]))
-        priority = compute_priority(total, completed, avg_score, last_submission_at)
+        full_name = format_full_name(row.last_name, row.first_name, row.middle_name)
+        short_name = format_short_name(row.last_name, row.first_name, row.middle_name)
+        priority = 0.0 if row.is_inactive else compute_priority(total, completed, avg_score, last_submission_at)
         items.append(
             PriorityResult(
                 student_id=row.id,
                 full_name=full_name,
+                short_name=short_name,
                 priority=priority,
+                is_inactive=bool(row.is_inactive),
                 completed=completed,
                 total=total,
                 avg_score=avg_score,
+                scored_count=scored_count,
                 last_submission_at=last_submission_at,
             )
         )
 
-    items.sort(key=lambda x: x["priority"], reverse=True)
+    items.sort(key=lambda x: (x["is_inactive"], -x["priority"], x["short_name"]))
     return items

@@ -53,6 +53,26 @@ async def submit_work(
     return True
 
 
+async def delete_submission(
+    session: AsyncSession,
+    student_id: int,
+    group_subject_id: int,
+    work_number: int,
+) -> bool:
+    stmt = select(Submission).where(
+        Submission.student_id == student_id,
+        Submission.group_subject_id == group_subject_id,
+        Submission.work_number == work_number,
+    )
+    result = await session.execute(stmt)
+    submission = result.scalar_one_or_none()
+    if not submission:
+        return False
+    await session.delete(submission)
+    await session.commit()
+    return True
+
+
 async def student_stats(session: AsyncSession, student_id: int, group_subject_id: int) -> tuple[int, float]:
     stmt = select(func.count(Submission.id), func.avg(Submission.score)).where(
         Submission.student_id == student_id,

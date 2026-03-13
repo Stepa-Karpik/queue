@@ -46,20 +46,45 @@ from bot.services.subjects import (
 )
 from bot.services.submissions import (
     list_group_students,
+    list_submitted_numbers,
     submissions_map,
     submit_work,
     get_submission_details,
-    total_active_works,
     is_work_submitted,
 )
-from bot.services.users import get_user_by_tg
+from bot.services.users import get_effective_group, get_user_by_tg, is_admin_mode, is_admin_user
 from bot.states.admin import AdminStates
 from bot.states.subject import SubjectStates
 from bot.utils.names import format_full_name
-from bot.utils.render import render_work_row, score_to_grade
+from bot.utils.render import render_progress_bar, render_work_row, score_to_grade
 
 router = Router()
 PAGE_SIZE = 5
+TEXT_LIMIT = 3800
+
+
+async def _student_can_use_subject_actions(session: AsyncSession, user, group_subject_id: int) -> bool:
+    if not user or not user.student_id:
+        return False
+    student_group = await get_student_group(session, user.student_id)
+    group_subject = await get_group_subject(session, group_subject_id)
+    return bool(student_group and group_subject and student_group.id == group_subject.group_id)
+
+
+async def _answer_chunked(message: Message, blocks: list[str]) -> None:
+    chunk: list[str] = []
+    current_length = 0
+    for block in blocks:
+        block_length = len(block) + (2 if chunk else 0)
+        if chunk and current_length + block_length > TEXT_LIMIT:
+            await message.answer("\n\n".join(chunk).strip())
+            chunk = [block]
+            current_length = len(block)
+            continue
+        chunk.append(block)
+        current_length += block_length
+    if chunk:
+        await message.answer("\n\n".join(chunk).strip())
 
 
 @router.message(F.text.in_(LABS_ALIASES))
@@ -73,13 +98,14 @@ async def practice_handler(message: Message, session: AsyncSession, state: FSMCo
 
 
 async def show_subjects(message: Message, session: AsyncSession, state: FSMContext, kind: SubjectKind):
+    await clear_score_prompt(message, state)
     user = await get_user_by_tg(session, message.from_user.id)
-    if not user or not user.student_id:
+    if not user:
         await message.answer("Сначала зарегистрируйтесь через /start.")
         return
-    group = await get_student_group(session, user.student_id)
+    group = await get_effective_group(session, user)
     if not group:
-        await message.answer("Группа не найдена.")
+        await message.answer("Группа не найдена. Если вы админ, сначала выберите группу через «Админ».")
         return
 
     items = []
@@ -102,6 +128,7 @@ async def show_subjects(message: Message, session: AsyncSession, state: FSMConte
 @router.callback_query(SubjectCallback.filter())
 async def subject_selected(call: CallbackQuery, callback_data: SubjectCallback, session: AsyncSession, state: FSMContext):
     await call.answer()
+    await clear_score_prompt(call.message, state)
     await state.update_data(group_subject_id=callback_data.group_subject_id, sort="alpha", page_subject=1)
     await show_subject_view(call.message, session, state)
     await state.set_state(SubjectStates.viewing_subject)
@@ -124,7 +151,8 @@ async def show_subject_view(
         await message.answer("Дисциплина не найдена.")
         return
 
-    total = await total_active_works(session, group_subject_id)
+    active_numbers = await list_active_work_numbers(session, group_subject_id)
+    total = len(active_numbers)
     subs_map = await submissions_map(session, group_subject_id)
     students = await list_group_students(session, gs.group_id)
 
@@ -156,7 +184,7 @@ async def show_subject_view(
             full_name = format_full_name(student.last_name, student.first_name, student.middle_name)
             submitted = subs_map.get(student.id, [])
             lines.append(f"{idx}. {full_name} — {len(submitted)}/{total}")
-            lines.append(render_work_row(total, submitted))
+            lines.append(render_work_row(active_numbers, submitted))
     else:
         lines.append("В группе пока нет студентов.")
     lines.append("")
@@ -261,36 +289,24 @@ async def mark_action(call: CallbackQuery, session: AsyncSession, state: FSMCont
     if not user or not user.student_id:
         await call.message.answer("Сначала зарегистрируйтесь через /start.")
         return
+    if not await _student_can_use_subject_actions(session, user, int(group_subject_id)):
+        await call.message.answer("Свои сдачи доступны только для вашей группы. Для чужой группы используйте режим «Староста».")
+        return
 
-    if user.role == Role.STAROSTA.value:
-        await state.update_data(mark_for_student=None, page_mark=1)
-        await show_student_selection(call.message, session, state)
-    else:
-        await state.update_data(mark_for_student=user.student_id)
-        numbers = await list_active_work_numbers(session, group_subject_id)
-        await call.message.answer("Выберите номер работы для отметки:", reply_markup=works_kb(numbers))
-        await state.set_state(SubjectStates.marking_work)
+    await clear_score_prompt(call.message, state)
+    await state.update_data(mark_for_student=user.student_id)
+    await show_work_selection(call.message, session, state)
+    await state.set_state(SubjectStates.marking_work)
 
 
 @router.callback_query(StudentCallback.filter())
 async def mark_select_student(call: CallbackQuery, callback_data: StudentCallback, session: AsyncSession, state: FSMContext):
-    await call.answer()
-    data = await state.get_data()
-    group_subject_id = data.get("group_subject_id")
-    if not group_subject_id:
-        await call.message.answer("Сначала выберите дисциплину.")
-        return
-    await state.update_data(mark_for_student=callback_data.student_id)
-    numbers = await list_active_work_numbers(session, group_subject_id)
-    await call.message.answer("Выберите номер работы для отметки:", reply_markup=works_kb(numbers))
-    await state.set_state(SubjectStates.marking_work)
+    await call.answer("Через эту кнопку отмечаются только ваши работы. Для группы используйте раздел «Староста».", show_alert=True)
 
 
 @router.callback_query(PageCallback.filter(F.action == "mark"))
 async def mark_page(call: CallbackQuery, callback_data: PageCallback, session: AsyncSession, state: FSMContext):
-    await call.answer()
-    await state.update_data(page_mark=callback_data.page)
-    await show_student_selection(call.message, session, state)
+    await call.answer("Для отметки других студентов используйте раздел «Староста».", show_alert=True)
 
 
 @router.callback_query(WorkCallback.filter())
@@ -308,12 +324,14 @@ async def mark_work_number(call: CallbackQuery, callback_data: WorkCallback, ses
         await call.answer("Эта работа уже отмечена. Отмена невозможна.", show_alert=True)
         return
 
+    await clear_score_prompt(call.message, state)
     await state.update_data(work_number=callback_data.number)
-    await call.message.answer(
+    prompt = await call.message.answer(
         "Введите балл от 0 до 100.\n"
-        "Если оценка не нужна, нажмите «Без балла».",
+        "Или нажмите «Без балла».",
         reply_markup=score_optional_kb(),
     )
+    await state.update_data(score_prompt_message_id=prompt.message_id)
     await state.set_state(SubjectStates.entering_score)
 
 
@@ -340,11 +358,10 @@ async def enter_score(message: Message, session: AsyncSession, state: FSMContext
     ok = await submit_work(session, student_id, group_subject_id, work_number, score)
     if not ok:
         await message.answer("Эта работа уже отмечена. Отмена невозможна.")
-    else:
-        await message.answer("Сдача зафиксирована.")
+        await refresh_submission_ui(message, session, state, cleanup_message=message)
+        return
 
-    await show_subject_view(message, session, state)
-    await state.set_state(SubjectStates.viewing_subject)
+    await refresh_submission_ui(message, session, state, cleanup_message=message)
 
 
 @router.callback_query(ActionCallback.filter(F.name == "stats"))
@@ -359,21 +376,25 @@ async def my_stats(call: CallbackQuery, session: AsyncSession, state: FSMContext
     if not group_subject_id:
         await call.message.answer("Сначала выберите дисциплину.")
         return
+    if not await _student_can_use_subject_actions(session, user, int(group_subject_id)):
+        await call.message.answer("Моя статистика доступна только для вашей группы. Для других групп используйте админские инструменты.")
+        return
 
     details = await get_submission_details(session, user.student_id, group_subject_id)
-    total = await total_active_works(session, group_subject_id)
+    active_numbers = await list_active_work_numbers(session, group_subject_id)
+    total = len(active_numbers)
     by_number = {d.work_number: d for d in details}
     lines = ["Ваша статистика:"]
     scores: list[int] = []
-    for i in range(1, total + 1):
-        if i in by_number:
-            if by_number[i].score is None:
-                lines.append(f"{i}. Сдано🟩 – без балла")
+    for number in active_numbers:
+        if number in by_number:
+            if by_number[number].score is None:
+                lines.append(f"{number}. Сдано🟩 – без балла")
             else:
-                scores.append(by_number[i].score)
-                lines.append(f"{i}. Сдано🟩 – Балл {by_number[i].score}")
+                scores.append(by_number[number].score)
+                lines.append(f"{number}. Сдано🟩 – Балл {by_number[number].score}")
         else:
-            lines.append(f"{i}. Не сдано🟥")
+            lines.append(f"{number}. Не сдано🟥")
     avg_score = (sum(scores) / len(scores)) if scores else 0
     grade = score_to_grade(avg_score)
     lines.append("")
@@ -488,23 +509,36 @@ async def priority_list(message: Message, session: AsyncSession, state: FSMConte
         await message.answer("Нет данных для очередности.")
         return
 
-    lines = ["📊 Очередность сдач (по убыванию приоритета):", ""]
+    blocks = [
+        "📊 Очередность сдачи\nЧем выше приоритет, тем раньше студенту стоит идти на сдачу."
+    ]
     for idx, item in enumerate(items, start=1):
-        percent = int(item["priority"] * 100)
-        lines.append(f"{idx}. {item['full_name']}")
-        lines.append(
-            f"приоритет {percent}% | сдано {item['completed']}/{item['total']} | средний балл {int(item['avg_score'])}"
+        progress_bar = render_progress_bar(item["completed"], item["total"])
+        if item["is_inactive"]:
+            blocks.append(f"🟥 {item['short_name']} — неактивен")
+            continue
+        badge = {1: "1️⃣", 2: "2️⃣", 3: "3️⃣"}.get(idx, f"{idx}.")
+        blocks.append(
+            f"{badge} {item['short_name']} {progress_bar}\n"
+            f"Приоритет: {item['priority'] * 100:.2f}%"
         )
-        lines.append("")
-    await message.answer("\n".join(lines).strip())
+    await _answer_chunked(message, blocks)
 
 
 @router.message(F.text.in_(BACK_ALIASES))
 async def back_to_menu(message: Message, state: FSMContext, session: AsyncSession):
+    await clear_score_prompt(message, state)
     await state.clear()
     user = await get_user_by_tg(session, message.from_user.id)
     is_starosta = bool(user and user.role == Role.STAROSTA.value)
-    await message.answer("Главное меню. Выберите раздел:", reply_markup=main_menu_kb(is_starosta=is_starosta))
+    await message.answer(
+        "Главное меню. Выберите раздел:",
+        reply_markup=main_menu_kb(
+            is_starosta=is_starosta,
+            is_admin=is_admin_user(user),
+            admin_mode=is_admin_mode(user),
+        ),
+    )
 
 
 @router.callback_query(ActionCallback.filter(F.name == "noop"))
@@ -515,12 +549,14 @@ async def noop_callback(call: CallbackQuery):
 @router.callback_query(ActionCallback.filter(F.name == "work_back"))
 async def work_back(call: CallbackQuery, session: AsyncSession, state: FSMContext):
     await call.answer()
+    await clear_score_prompt(call.message, state)
     await show_subject_view(call.message, session, state)
 
 
 @router.callback_query(ActionCallback.filter(F.name == "mark_back"))
 async def mark_back(call: CallbackQuery, session: AsyncSession, state: FSMContext):
     await call.answer()
+    await clear_score_prompt(call.message, state)
     await show_subject_view(call.message, session, state)
 
 
@@ -538,17 +574,92 @@ async def no_score_submit(call: CallbackQuery, session: AsyncSession, state: FSM
     ok = await submit_work(session, student_id, group_subject_id, work_number, None)
     if not ok:
         await call.message.answer("Эта работа уже отмечена. Отмена невозможна.")
-    else:
-        await call.message.answer("Сдача зафиксирована без балла.")
-    await show_subject_view(call.message, session, state)
-    await state.set_state(SubjectStates.viewing_subject)
+        await refresh_submission_ui(call.message, session, state)
+        return
+    await refresh_submission_ui(call.message, session, state)
 
 
 @router.callback_query(ActionCallback.filter(F.name == "cancel_score"))
 async def cancel_score_submit(call: CallbackQuery, session: AsyncSession, state: FSMContext):
     await call.answer()
-    await call.message.answer("Отметка отменена.")
-    await show_subject_view(call.message, session, state)
+    await clear_score_prompt(call.message, state)
+    await state.set_state(SubjectStates.viewing_subject)
+
+
+async def show_work_selection(message: Message, session: AsyncSession, state: FSMContext):
+    data = await state.get_data()
+    group_subject_id = data.get("group_subject_id")
+    student_id = data.get("mark_for_student")
+    if not all([group_subject_id, student_id]):
+        await message.answer("Сначала выберите дисциплину.")
+        return
+
+    numbers = await list_active_work_numbers(session, group_subject_id)
+    if not numbers:
+        await message.answer("Для этой дисциплины пока нет активных работ.")
+        return
+
+    submitted_numbers = await list_submitted_numbers(session, student_id, group_subject_id)
+    text = "Выберите номер работы для отметки:\n🟩 — работа уже отмечена."
+    reply_markup = works_kb(numbers, submitted_numbers)
+
+    same_context = (
+        data.get("mark_group_subject_id") == group_subject_id
+        and data.get("mark_student_id") == student_id
+    )
+    mark_message_id = data.get("mark_message_id") if same_context else None
+
+    if mark_message_id:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=mark_message_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
+        except TelegramBadRequest as exc:
+            if "message is not modified" not in str(exc):
+                mark_message = await message.answer(text, reply_markup=reply_markup)
+                mark_message_id = mark_message.message_id
+        except Exception:
+            mark_message = await message.answer(text, reply_markup=reply_markup)
+            mark_message_id = mark_message.message_id
+    else:
+        mark_message = await message.answer(text, reply_markup=reply_markup)
+        mark_message_id = mark_message.message_id
+
+    await state.update_data(
+        mark_message_id=mark_message_id,
+        mark_group_subject_id=group_subject_id,
+        mark_student_id=student_id,
+    )
+
+
+async def clear_score_prompt(message: Message, state: FSMContext):
+    data = await state.get_data()
+    prompt_message_id = data.get("score_prompt_message_id")
+    if prompt_message_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_message_id)
+        except Exception:
+            pass
+    await state.update_data(score_prompt_message_id=None, work_number=None)
+
+
+async def refresh_submission_ui(
+    message: Message,
+    session: AsyncSession,
+    state: FSMContext,
+    cleanup_message: Message | None = None,
+):
+    await clear_score_prompt(message, state)
+    if cleanup_message:
+        try:
+            await cleanup_message.delete()
+        except Exception:
+            pass
+    await show_subject_view(message, session, state)
+    await show_work_selection(message, session, state)
     await state.set_state(SubjectStates.viewing_subject)
 
 

@@ -1,19 +1,19 @@
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from bot.models import GroupSubject, Role, Student, Subject, SubjectKind, Submission, User
+from bot.models import GroupSubject, Role, ScheduleTemplate, Student, Subject, SubjectKind, Submission, User
 from bot.utils.names import normalize_name
 
 
 async def list_group_subjects_all(session: AsyncSession, group_id: int) -> list[GroupSubject]:
     stmt = (
         select(GroupSubject)
+        .join(Subject, Subject.id == GroupSubject.subject_id)
         .options(joinedload(GroupSubject.subject))
         .where(GroupSubject.group_id == group_id, GroupSubject.is_active.is_(True))
         .order_by(Subject.name)
     )
-    stmt = stmt.join(Subject, Subject.id == GroupSubject.subject_id)
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
@@ -50,7 +50,7 @@ async def rename_group_subject(session: AsyncSession, group_subject_id: int, new
         )
         duplicate = existing_link_result.scalar_one_or_none()
         if duplicate:
-            return False, "В вашей группе уже есть дисциплина с таким названием."
+            return False, "В этой группе уже есть дисциплина с таким названием."
         gs.subject_id = target_subject.id
     else:
         new_subject = Subject(name=cleaned_name, kind=gs.subject.kind)
@@ -68,7 +68,7 @@ async def set_group_subject_kind(session: AsyncSession, group_subject_id: int, k
         return False, "Дисциплина не найдена."
     gs.subject.kind = kind.value
     await session.commit()
-    return True, "Тип дисциплины обновлён."
+    return True, "Тип дисциплины обновлен."
 
 
 async def deactivate_group_subject(session: AsyncSession, group_subject_id: int) -> bool:
@@ -133,12 +133,21 @@ async def update_student_full_name(
     return True
 
 
+async def toggle_student_inactive(session: AsyncSession, student_id: int) -> tuple[bool, str]:
+    student = await get_student_with_user(session, student_id)
+    if not student:
+        return False, "Пользователь не найден."
+    student.is_inactive = not student.is_inactive
+    await session.commit()
+    return True, "Статус активности обновлен."
+
+
 async def set_role_for_student_user(session: AsyncSession, student_id: int, role: Role) -> tuple[bool, str]:
     student = await get_student_with_user(session, student_id)
     if not student:
         return False, "Пользователь не найден."
     if not student.user:
-        return False, "У этого студента ещё нет Telegram-аккаунта в системе. Пусть выполнит /start."
+        return False, "У этого студента еще нет Telegram-аккаунта в системе. Пусть выполнит /start."
     student.user.role = role.value
     await session.commit()
     return True, "Роль обновлена."
@@ -150,7 +159,13 @@ async def delete_student_with_related(session: AsyncSession, student_id: int) ->
         return False
 
     await session.execute(delete(Submission).where(Submission.student_id == student_id))
-    await session.execute(delete(User).where(User.student_id == student_id))
+    if student.user:
+        await session.execute(
+            update(ScheduleTemplate)
+            .where(ScheduleTemplate.uploaded_by_user_id == student.user.id)
+            .values(uploaded_by_user_id=None)
+        )
+        await session.execute(delete(User).where(User.id == student.user.id))
     await session.execute(delete(Student).where(Student.id == student_id))
     await session.commit()
     return True

@@ -16,6 +16,7 @@ from bot.keyboards.callbacks import (
     AdminWorkCallback,
     AddSubjectCallback,
 )
+from bot.utils.render import keycap_number
 
 BTN_PROFILE = "👤 Профиль"
 BTN_LABS = "🧪 Лабораторные"
@@ -24,6 +25,13 @@ BTN_HELP = "ℹ️ Как пользоваться"
 BTN_BACK_MENU = "⬅️ Главное меню"
 BTN_PRIORITY = "📊 Очередность сдач"
 BTN_STAROSTA = "🛠 Староста"
+BTN_GROUP_LIST = "👥 Список группы"
+BTN_SCHEDULE = "📆 Расписание"
+BTN_ADMIN = "👑 Админ"
+BTN_ADMIN_GROUPS = "🏫 Группы"
+BTN_ADMIN_USERS = "👤 Все пользователи"
+BTN_ADMIN_BROADCAST = "📣 Рассылка"
+BTN_STUDENT_MODE = "Студент"
 
 PROFILE_ALIASES = (BTN_PROFILE, "Профиль")
 LABS_ALIASES = (BTN_LABS, "Лабораторные работы")
@@ -32,15 +40,39 @@ HELP_ALIASES = (BTN_HELP, "Помощь")
 BACK_ALIASES = (BTN_BACK_MENU, "Назад")
 PRIORITY_ALIASES = (BTN_PRIORITY, "Очередность сдач")
 STAROSTA_ALIASES = (BTN_STAROSTA, "Староста")
+GROUP_LIST_ALIASES = (BTN_GROUP_LIST, "Список группы")
+SCHEDULE_ALIASES = (BTN_SCHEDULE, "Расписание")
+ADMIN_ALIASES = (BTN_ADMIN, "Админ")
+ADMIN_GROUPS_ALIASES = (BTN_ADMIN_GROUPS, "Группы")
+ADMIN_USERS_ALIASES = (BTN_ADMIN_USERS, "Все пользователи")
+ADMIN_BROADCAST_ALIASES = (BTN_ADMIN_BROADCAST, "Рассылка")
+STUDENT_MODE_ALIASES = (BTN_STUDENT_MODE, "Режим студента")
 
 
-def main_menu_kb(is_starosta: bool = False) -> ReplyKeyboardMarkup:
+def admin_mode_menu_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_ADMIN_GROUPS), KeyboardButton(text=BTN_ADMIN_USERS)],
+            [KeyboardButton(text=BTN_SCHEDULE), KeyboardButton(text=BTN_GROUP_LIST)],
+            [KeyboardButton(text=BTN_STAROSTA), KeyboardButton(text=BTN_ADMIN_BROADCAST)],
+            [KeyboardButton(text=BTN_STUDENT_MODE)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def main_menu_kb(is_starosta: bool = False, is_admin: bool = False, admin_mode: bool = False) -> ReplyKeyboardMarkup:
+    if admin_mode:
+        return admin_mode_menu_kb()
     keyboard = [
         [KeyboardButton(text=BTN_LABS), KeyboardButton(text=BTN_PRACTICE)],
+        [KeyboardButton(text=BTN_SCHEDULE), KeyboardButton(text=BTN_GROUP_LIST)],
         [KeyboardButton(text=BTN_PROFILE), KeyboardButton(text=BTN_HELP)],
     ]
-    if is_starosta:
+    if is_starosta or is_admin:
         keyboard.append([KeyboardButton(text=BTN_STAROSTA)])
+    if is_admin:
+        keyboard.append([KeyboardButton(text=BTN_ADMIN)])
     return ReplyKeyboardMarkup(
         keyboard=keyboard,
         resize_keyboard=True,
@@ -89,6 +121,14 @@ def subjects_kb(items: list[tuple[int, str, str]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def profile_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Выйти", callback_data=ActionCallback(name="logout").pack())]
+        ]
+    )
+
+
 def sort_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -98,11 +138,18 @@ def sort_kb() -> InlineKeyboardMarkup:
     )
 
 
-def works_kb(numbers: list[int]) -> InlineKeyboardMarkup:
+def works_kb(numbers: list[int], submitted_numbers: list[int] | set[int] | None = None) -> InlineKeyboardMarkup:
+    submitted_set = set(submitted_numbers or [])
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for idx, num in enumerate(numbers, start=1):
-        row.append(InlineKeyboardButton(text=str(num), callback_data=WorkCallback(number=num).pack()))
+        is_submitted = num in submitted_set
+        row.append(
+            InlineKeyboardButton(
+                text="🟩" if is_submitted else keycap_number(num),
+                callback_data=ActionCallback(name="noop").pack() if is_submitted else WorkCallback(number=num).pack(),
+            )
+        )
         if idx % 5 == 0:
             rows.append(row)
             row = []
