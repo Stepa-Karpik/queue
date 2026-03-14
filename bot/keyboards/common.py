@@ -58,6 +58,7 @@ def admin_mode_menu_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_STUDENT_MODE)],
         ],
         resize_keyboard=True,
+        one_time_keyboard=True,
     )
 
 
@@ -76,21 +77,13 @@ def main_menu_kb(is_starosta: bool = False, is_admin: bool = False, admin_mode: 
     return ReplyKeyboardMarkup(
         keyboard=keyboard,
         resize_keyboard=True,
+        one_time_keyboard=True,
     )
 
 
 def back_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_BACK_MENU)]],
-        resize_keyboard=True,
-    )
-
-
-def subject_actions_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_BACK_MENU)],
-        ],
         resize_keyboard=True,
     )
 
@@ -117,6 +110,7 @@ def subjects_kb(items: list[tuple[int, str, str]]) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=name, callback_data=SubjectCallback(group_subject_id=gs_id, kind=kind).pack())]
         for gs_id, name, kind in items
     ]
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data=ActionCallback(name="subject_menu").pack())])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -178,6 +172,7 @@ def subject_view_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="↕️ Изменить сортировку", callback_data=ActionCallback(name="sort").pack())],
             [InlineKeyboardButton(text="✅ Отметить сдачу", callback_data=ActionCallback(name="mark").pack())],
             [InlineKeyboardButton(text="📈 Моя статистика", callback_data=ActionCallback(name="stats").pack())],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=ActionCallback(name="subject_list").pack())],
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)

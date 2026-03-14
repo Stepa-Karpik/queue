@@ -11,7 +11,6 @@ from bot.keyboards.common import (
     PRIORITY_ALIASES,
     main_menu_kb,
     subjects_kb,
-    subject_actions_kb,
     subject_back_kb,
     subject_view_kb,
     admin_add_subject_kind_kb,
@@ -61,7 +60,6 @@ from bot.utils.render import render_progress_bar, render_work_row, score_to_grad
 router = Router()
 PAGE_SIZE = 5
 TEXT_LIMIT = 3800
-SUBJECT_KEYBOARD_PING = "\u2060"
 
 
 async def _student_can_use_subject_actions(session: AsyncSession, user, group_subject_id: int) -> bool:
@@ -107,14 +105,6 @@ async def _delete_message_by_id(message: Message, message_id: int | None) -> Non
         return
     try:
         await message.bot.delete_message(chat_id=message.chat.id, message_id=message_id)
-    except Exception:
-        pass
-
-
-async def _set_subject_navigation(message: Message) -> None:
-    nav_message = await message.answer(SUBJECT_KEYBOARD_PING, reply_markup=subject_actions_kb())
-    try:
-        await nav_message.delete()
     except Exception:
         pass
 
@@ -173,7 +163,19 @@ async def practice_handler(message: Message, session: AsyncSession, state: FSMCo
 async def show_subjects(message: Message, session: AsyncSession, state: FSMContext, kind: SubjectKind):
     await clear_score_prompt(message, state)
     await _close_subject_ui(message, state)
-    user = await get_user_by_tg(session, message.from_user.id)
+    await show_subject_picker(message, session, state, kind, tg_user_id=message.from_user.id)
+
+
+async def show_subject_picker(
+    message: Message,
+    session: AsyncSession,
+    state: FSMContext,
+    kind: SubjectKind,
+    *,
+    edit_current: bool = False,
+    tg_user_id: int | None = None,
+):
+    user = await get_user_by_tg(session, tg_user_id or message.from_user.id)
     if not user:
         await message.answer("Сначала зарегистрируйтесь через /start.")
         return
@@ -191,29 +193,59 @@ async def show_subjects(message: Message, session: AsyncSession, state: FSMConte
         await message.answer("Дисциплины не настроены для вашей группы.")
         return
 
-    await state.update_data(kind=kind.value)
-    picker_message = await message.answer(
+    text = (
         "Выберите дисциплину из списка ниже.\n"
-        "После выбора откроется журнал группы и быстрые действия.",
-        reply_markup=subjects_kb(items),
+        "После выбора откроется журнал группы и быстрые действия."
     )
-    await state.update_data(subject_picker_message_id=picker_message.message_id)
+    reply_markup = subjects_kb(items)
+    await state.update_data(
+        kind=kind.value,
+        group_subject_id=None,
+        subject_mode=None,
+    )
+    if edit_current:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
+            await state.update_data(
+                subject_picker_message_id=message.message_id,
+                subject_screen_message_id=None,
+            )
+            return
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc):
+                await state.update_data(
+                    subject_picker_message_id=message.message_id,
+                    subject_screen_message_id=None,
+                )
+                return
+        except Exception:
+            pass
+
+    picker_message = await message.answer(text, reply_markup=reply_markup)
+    await state.update_data(
+        subject_picker_message_id=picker_message.message_id,
+        subject_screen_message_id=None,
+    )
 
 
 @router.callback_query(SubjectCallback.filter())
 async def subject_selected(call: CallbackQuery, callback_data: SubjectCallback, session: AsyncSession, state: FSMContext):
     await call.answer()
     await clear_score_prompt(call.message, state)
-    await _delete_message_by_id(call.message, call.message.message_id)
     await state.update_data(
         group_subject_id=callback_data.group_subject_id,
         sort="alpha",
         page_subject=1,
-        subject_picker_message_id=None,
+        subject_picker_message_id=call.message.message_id,
+        subject_screen_message_id=call.message.message_id,
         subject_mode="dashboard",
     )
-    await show_subject_view(call.message, session, state, force_new=True)
-    await _set_subject_navigation(call.message)
+    await show_subject_view(call.message, session, state)
     await state.set_state(SubjectStates.viewing_subject)
 
 
@@ -570,12 +602,17 @@ async def priority_list(message: Message, session: AsyncSession, state: FSMConte
     await _answer_chunked(message, _build_priority_blocks(items))
 
 
-@router.message(F.text.in_(BACK_ALIASES))
-async def back_to_menu(message: Message, state: FSMContext, session: AsyncSession):
+async def _return_to_main_menu(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    *,
+    tg_user_id: int | None = None,
+) -> None:
     await clear_score_prompt(message, state)
     await _close_subject_ui(message, state)
     await state.clear()
-    user = await get_user_by_tg(session, message.from_user.id)
+    user = await get_user_by_tg(session, tg_user_id or message.from_user.id)
     is_starosta = bool(user and user.role == Role.STAROSTA.value)
     await message.answer(
         "Главное меню. Выберите раздел:",
@@ -585,6 +622,37 @@ async def back_to_menu(message: Message, state: FSMContext, session: AsyncSessio
             admin_mode=is_admin_mode(user),
         ),
     )
+
+
+@router.message(F.text.in_(BACK_ALIASES))
+async def back_to_menu(message: Message, state: FSMContext, session: AsyncSession):
+    await _return_to_main_menu(message, state, session, tg_user_id=message.from_user.id)
+
+
+@router.callback_query(ActionCallback.filter(F.name == "subject_menu"))
+async def subject_menu(call: CallbackQuery, session: AsyncSession, state: FSMContext):
+    await call.answer()
+    await _return_to_main_menu(call.message, state, session, tg_user_id=call.from_user.id)
+
+
+@router.callback_query(ActionCallback.filter(F.name == "subject_list"))
+async def subject_list(call: CallbackQuery, session: AsyncSession, state: FSMContext):
+    await call.answer()
+    await clear_score_prompt(call.message, state)
+    data = await state.get_data()
+    kind_value = data.get("kind")
+    if not kind_value:
+        await call.answer("Список дисциплин недоступен.", show_alert=True)
+        return
+    await show_subject_picker(
+        call.message,
+        session,
+        state,
+        SubjectKind(kind_value),
+        edit_current=True,
+        tg_user_id=call.from_user.id,
+    )
+    await state.set_state(SubjectStates.viewing_subject)
 
 
 @router.callback_query(ActionCallback.filter(F.name == "noop"))
