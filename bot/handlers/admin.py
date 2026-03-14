@@ -4,6 +4,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards.admin import (
+    admin_broadcast_kb,
     admin_groups_kb,
     admin_user_card_kb,
     admin_user_groups_kb,
@@ -16,6 +17,9 @@ from bot.keyboards.common import (
     ADMIN_BROADCAST_ALIASES,
     ADMIN_GROUPS_ALIASES,
     ADMIN_USERS_ALIASES,
+    GROUP_LIST_ALIASES,
+    SCHEDULE_ALIASES,
+    STAROSTA_ALIASES,
     STUDENT_MODE_ALIASES,
     confirm_kb,
     main_menu_kb,
@@ -39,6 +43,7 @@ from bot.services.users import (
     set_admin_mode,
 )
 from bot.states.admin_panel import AdminPanelStates
+from bot.utils.admin_state import cancel_admin_broadcast_flow
 from bot.utils.names import format_full_name, format_short_name, normalize_group_name, split_full_name
 
 router = Router()
@@ -71,8 +76,18 @@ def _student_menu(user):
     )
 
 
+async def _delete_message_by_id(message: Message, message_id: int | None) -> None:
+    if not message_id:
+        return
+    try:
+        await message.bot.delete_message(chat_id=message.chat.id, message_id=message_id)
+    except Exception:
+        pass
+
+
 @router.message(F.text.in_(ADMIN_ALIASES))
 async def open_admin_mode(message: Message, state: FSMContext, session: AsyncSession):
+    await cancel_admin_broadcast_flow(message, state)
     user = await get_user_by_tg(session, message.from_user.id)
     if not user or not user.student_id:
         await message.answer("Сначала зарегистрируйтесь через /start.")
@@ -92,6 +107,7 @@ async def open_admin_mode(message: Message, state: FSMContext, session: AsyncSes
 
 @router.message(F.text.in_(STUDENT_MODE_ALIASES))
 async def close_admin_mode(message: Message, state: FSMContext, session: AsyncSession):
+    await cancel_admin_broadcast_flow(message, state)
     user = await get_user_by_tg(session, message.from_user.id)
     if not is_admin_user(user):
         await message.answer("Эта кнопка доступна только админу.")
@@ -107,7 +123,8 @@ async def close_admin_mode(message: Message, state: FSMContext, session: AsyncSe
 
 
 @router.message(F.text.in_(ADMIN_GROUPS_ALIASES))
-async def admin_groups(message: Message, session: AsyncSession):
+async def admin_groups(message: Message, state: FSMContext, session: AsyncSession):
+    await cancel_admin_broadcast_flow(message, state)
     user = await _require_admin(session, message.from_user.id)
     if not user:
         await message.answer("Сначала включите режим администратора.")
@@ -117,6 +134,7 @@ async def admin_groups(message: Message, session: AsyncSession):
 
 @router.message(F.text.in_(ADMIN_USERS_ALIASES))
 async def admin_users(message: Message, state: FSMContext, session: AsyncSession):
+    await cancel_admin_broadcast_flow(message, state)
     user = await _require_admin(session, message.from_user.id)
     if not user:
         await message.answer("Сначала включите режим администратора.")
@@ -126,13 +144,18 @@ async def admin_users(message: Message, state: FSMContext, session: AsyncSession
 
 @router.message(F.text.in_(ADMIN_BROADCAST_ALIASES))
 async def start_broadcast(message: Message, state: FSMContext, session: AsyncSession):
+    await cancel_admin_broadcast_flow(message, state)
     user = await _require_admin(session, message.from_user.id)
     if not user:
         await message.answer("Сначала включите режим администратора.")
         return
 
     await state.set_state(AdminPanelStates.waiting_broadcast_text)
-    await message.answer("Введите текст рассылки для всех зарегистрированных пользователей.")
+    prompt = await message.answer(
+        "Введите текст рассылки для всех зарегистрированных пользователей.",
+        reply_markup=admin_broadcast_kb(),
+    )
+    await state.update_data(admin_broadcast_prompt_message_id=prompt.message_id)
 
 
 @router.callback_query(AdminPanelCallback.filter())
@@ -147,6 +170,14 @@ async def admin_callbacks(call: CallbackQuery, callback_data: AdminPanelCallback
     if action == "noop":
         return
     if action == "back":
+        await _safe_edit_or_answer(call.message, _admin_mode_text(user), None, edit=True)
+        return
+    if action == "broadcast_cancel":
+        await state.clear()
+        await _safe_edit_or_answer(call.message, "Рассылка отменена.", None, edit=True)
+        return
+    if action == "broadcast_menu":
+        await state.clear()
         await _safe_edit_or_answer(call.message, _admin_mode_text(user), None, edit=True)
         return
     if action == "groups_page":
@@ -306,7 +337,19 @@ async def rename_user_message(message: Message, state: FSMContext, session: Asyn
     await show_registered_user_card(message, session, target.id, edit=False)
 
 
-@router.message(AdminPanelStates.waiting_broadcast_text)
+@router.message(
+    AdminPanelStates.waiting_broadcast_text,
+    ~F.text.in_(
+        ADMIN_ALIASES
+        + ADMIN_GROUPS_ALIASES
+        + ADMIN_USERS_ALIASES
+        + ADMIN_BROADCAST_ALIASES
+        + STUDENT_MODE_ALIASES
+        + GROUP_LIST_ALIASES
+        + SCHEDULE_ALIASES
+        + STAROSTA_ALIASES
+    ),
+)
 async def broadcast_message(message: Message, state: FSMContext, session: AsyncSession):
     user = await _require_admin(session, message.from_user.id)
     if not user:
@@ -314,6 +357,8 @@ async def broadcast_message(message: Message, state: FSMContext, session: AsyncS
         await state.clear()
         return
 
+    data = await state.get_data()
+    await _delete_message_by_id(message, data.get("admin_broadcast_prompt_message_id"))
     users = await list_registered_users(session)
     success = 0
     failed = 0

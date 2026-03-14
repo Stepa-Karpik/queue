@@ -58,7 +58,7 @@ def admin_mode_menu_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_STUDENT_MODE)],
         ],
         resize_keyboard=True,
-        one_time_keyboard=True,
+        is_persistent=True,
     )
 
 

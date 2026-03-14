@@ -48,6 +48,7 @@ from bot.services.subjects import deactivate_last_work_number
 from bot.services.submissions import delete_submission, list_submitted_numbers, submit_work
 from bot.services.users import get_effective_group, get_user_by_tg, is_admin_mode, is_admin_user
 from bot.states.management import ManagementStates
+from bot.utils.admin_state import cancel_admin_broadcast_flow
 from bot.utils.names import format_full_name, format_short_name, normalize_group_name, split_full_name
 
 router = Router()
@@ -64,6 +65,7 @@ async def _get_actor_and_group(session: AsyncSession, tg_id: int):
 
 @router.message(F.text.in_(STAROSTA_ALIASES))
 async def open_management_panel(message: Message, state: FSMContext, session: AsyncSession):
+    await cancel_admin_broadcast_flow(message, state)
     user, group = await _get_actor_and_group(session, message.from_user.id)
     if not user:
         await message.answer("Раздел доступен только старосте или админу.")

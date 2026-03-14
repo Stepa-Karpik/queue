@@ -25,6 +25,7 @@ from bot.services.schedule import (
 from bot.services.subjects import list_group_subjects
 from bot.services.users import get_effective_group, get_user_by_tg, is_admin_mode
 from bot.states.schedule import ScheduleStates
+from bot.utils.admin_state import cancel_admin_broadcast_flow
 from bot.utils.names import normalize_group_name
 
 router = Router()
@@ -41,6 +42,7 @@ async def _delete_message_by_id(message: Message, message_id: int | None) -> Non
 
 @router.message(F.text.in_(SCHEDULE_ALIASES))
 async def schedule_handler(message: Message, state: FSMContext, session: AsyncSession):
+    await cancel_admin_broadcast_flow(message, state)
     user = await get_user_by_tg(session, message.from_user.id)
     if not user:
         await message.answer("Сначала зарегистрируйтесь через /start.")

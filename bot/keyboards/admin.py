@@ -71,6 +71,17 @@ def admin_user_groups_kb(items: list[tuple[int, str]], user_id: int, page: int, 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def admin_broadcast_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✖️ Отменить", callback_data=AdminPanelCallback(action="broadcast_cancel", value="0").pack()),
+                InlineKeyboardButton(text="⬅️ Главное меню", callback_data=AdminPanelCallback(action="broadcast_menu", value="0").pack()),
+            ]
+        ]
+    )
+
+
 def _pagination(action: str, page: int, total_pages: int) -> list[list[InlineKeyboardButton]]:
     if total_pages <= 1:
         return []

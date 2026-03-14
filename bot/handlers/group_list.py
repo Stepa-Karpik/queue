@@ -1,17 +1,20 @@
 from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards.common import GROUP_LIST_ALIASES
 from bot.services.admin_panel import list_group_students_with_user
 from bot.services.users import get_effective_group, get_user_by_tg
+from bot.utils.admin_state import cancel_admin_broadcast_flow
 from bot.utils.names import format_short_name, normalize_group_name
 
 router = Router()
 
 
 @router.message(F.text.in_(GROUP_LIST_ALIASES))
-async def group_list_handler(message: Message, session: AsyncSession):
+async def group_list_handler(message: Message, state: FSMContext, session: AsyncSession):
+    await cancel_admin_broadcast_flow(message, state)
     user = await get_user_by_tg(session, message.from_user.id)
     if not user:
         await message.answer("Сначала зарегистрируйтесь через /start.")
