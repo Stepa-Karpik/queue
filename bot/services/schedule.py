@@ -374,6 +374,10 @@ async def list_bindable_subjects(session: AsyncSession, group_id: int) -> list[d
                     "discipline_label": f"{lesson_type_label(entry.lesson_type)} {entry.discipline_base}",
                     "lesson_type": entry.lesson_type,
                 }
+    bindings = await list_schedule_bindings(session, group_id)
+    for binding in bindings:
+        if binding.discipline_key in seen:
+            seen[binding.discipline_key]["linked_subject_name"] = binding.group_subject.subject.name
     return sorted(seen.values(), key=lambda item: item["discipline_label"])
 
 

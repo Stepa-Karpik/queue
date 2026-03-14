@@ -44,6 +44,7 @@ from bot.services.admin_panel import (
     update_student_full_name,
 )
 from bot.services.subjects import add_work_number, create_subject_with_works, deactivate_work_number, list_active_work_numbers
+from bot.services.subjects import deactivate_last_work_number
 from bot.services.submissions import delete_submission, list_submitted_numbers, submit_work
 from bot.services.users import get_effective_group, get_user_by_tg, is_admin_mode, is_admin_user
 from bot.states.management import ManagementStates
@@ -362,16 +363,15 @@ async def subject_actions(call: CallbackQuery, callback_data: ManageSubjectCallb
             await show_subject_card(call.message, session, callback_data.group_subject_id, edit=False)
         return
     if action == "add_work":
-        number = await add_work_number(session, callback_data.group_subject_id)
-        await call.message.answer(f"Добавлена работа №{number}.")
-        await show_subject_card(call.message, session, callback_data.group_subject_id, edit=False)
+        await add_work_number(session, callback_data.group_subject_id)
+        await show_subject_card(call.message, session, callback_data.group_subject_id, edit=True)
         return
     if action == "remove_work":
-        numbers = await list_active_work_numbers(session, callback_data.group_subject_id)
-        if not numbers:
+        ok = await deactivate_last_work_number(session, callback_data.group_subject_id)
+        if not ok:
             await call.message.answer("Нет активных работ.")
             return
-        await call.message.edit_text("Выберите работу для удаления:", reply_markup=management_remove_works_kb(numbers, callback_data.group_subject_id))
+        await show_subject_card(call.message, session, callback_data.group_subject_id, edit=True)
         return
     if action == "delete":
         await call.message.answer(
@@ -577,6 +577,7 @@ async def show_subject_card(message: Message, session: AsyncSession, group_subje
     text = (
         f"Дисциплина: {group_subject.subject.name}\n"
         f"Тип: {'Лабораторные' if group_subject.subject.kind == SubjectKind.LAB.value else 'Практические'}\n"
+        f"Количество работ: {len(numbers)}\n"
         f"Активные работы: {', '.join(map(str, numbers)) if numbers else 'нет'}"
     )
     await _safe_edit_or_answer(message, text, management_subject_card_kb(group_subject_id), edit)

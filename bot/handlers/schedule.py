@@ -30,6 +30,15 @@ from bot.utils.names import normalize_group_name
 router = Router()
 
 
+async def _delete_message_by_id(message: Message, message_id: int | None) -> None:
+    if not message_id:
+        return
+    try:
+        await message.bot.delete_message(chat_id=message.chat.id, message_id=message_id)
+    except Exception:
+        pass
+
+
 @router.message(F.text.in_(SCHEDULE_ALIASES))
 async def schedule_handler(message: Message, state: FSMContext, session: AsyncSession):
     user = await get_user_by_tg(session, message.from_user.id)
@@ -77,6 +86,9 @@ async def schedule_callbacks(call: CallbackQuery, callback_data: ScheduleCallbac
     can_manage = user.role == Role.STAROSTA.value or is_admin_mode(user)
 
     if callback_data.action == "back":
+        internal_message_id = (await state.get_data()).get("schedule_bind_internal_message_id")
+        await _delete_message_by_id(call.message, internal_message_id)
+        await state.update_data(schedule_bind_internal_message_id=None)
         try:
             await call.message.delete()
         except Exception:
@@ -84,12 +96,36 @@ async def schedule_callbacks(call: CallbackQuery, callback_data: ScheduleCallbac
         return
 
     if callback_data.action == "back_to_schedule":
+        internal_message_id = (await state.get_data()).get("schedule_bind_internal_message_id")
+        await _delete_message_by_id(call.message, internal_message_id)
+        await state.update_data(schedule_bind_internal_message_id=None)
         has_schedule = await has_full_schedule(session, group.id)
         _, entries = await render_week_entries(session, group.id)
         await call.message.edit_text(
             format_schedule_text(entries) if has_schedule else "Расписание пока не подтягивается автоматически, вы можете добавить его самостоятельно.",
             reply_markup=schedule_overview_kb(can_manage=can_manage, has_schedule=has_schedule),
         )
+        return
+
+    if callback_data.action == "back_internal_bind":
+        data = await state.get_data()
+        external_message_id = data.get("schedule_bind_external_message_id")
+        bindable = data.get("schedule_bind_items") or []
+        await _delete_message_by_id(call.message, call.message.message_id)
+        await state.update_data(schedule_bind_external=None, schedule_bind_internal_items=None, schedule_bind_internal_message_id=None)
+        text = _render_external_bind_list(bindable, None)
+        if external_message_id:
+            try:
+                await call.message.bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=external_message_id,
+                    text=text,
+                    reply_markup=schedule_bind_subjects_kb(
+                        [(item["discipline_key"], item["discipline_label"]) for item in bindable]
+                    ),
+                )
+            except Exception:
+                pass
         return
 
     if callback_data.action == "upload":
@@ -109,7 +145,15 @@ async def schedule_callbacks(call: CallbackQuery, callback_data: ScheduleCallbac
         if not bindable:
             await call.message.answer("В расписании нет лабораторных или практических для привязки.")
             return
-        await state.update_data(schedule_bind_items=bindable, schedule_bind_external=None, schedule_bind_internal_items=None)
+        internal_message_id = (await state.get_data()).get("schedule_bind_internal_message_id")
+        await _delete_message_by_id(call.message, internal_message_id)
+        await state.update_data(
+            schedule_bind_items=bindable,
+            schedule_bind_external=None,
+            schedule_bind_internal_items=None,
+            schedule_bind_internal_message_id=None,
+            schedule_bind_external_message_id=call.message.message_id,
+        )
         text = _render_external_bind_list(bindable, None)
         await call.message.edit_text(text, reply_markup=schedule_bind_subjects_kb([(item["discipline_key"], item["discipline_label"]) for item in bindable]))
         return
@@ -138,16 +182,31 @@ async def schedule_callbacks(call: CallbackQuery, callback_data: ScheduleCallbac
         group_subjects = await list_group_subjects(session, group.id, subject_kind)
         internal_items = [(item.id, item.subject.name) for item in group_subjects]
         await state.update_data(schedule_bind_internal_items=internal_items)
-        await call.message.answer(
-            _render_internal_bind_list(internal_items, selected["discipline_label"]),
+        internal_text = _render_internal_bind_list(internal_items, selected["discipline_label"])
+        internal_message_id = (await state.get_data()).get("schedule_bind_internal_message_id")
+        if internal_message_id:
+            try:
+                await call.message.bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=internal_message_id,
+                    text=internal_text,
+                    reply_markup=schedule_bind_internal_kb(internal_items),
+                )
+                return
+            except Exception:
+                pass
+        internal_message = await call.message.answer(
+            internal_text,
             reply_markup=schedule_bind_internal_kb(internal_items),
         )
+        await state.update_data(schedule_bind_internal_message_id=internal_message.message_id)
         return
 
     if callback_data.action == "pick_internal":
         data = await state.get_data()
         selected_external = data.get("schedule_bind_external")
         internal_items = data.get("schedule_bind_internal_items") or []
+        external_message_id = data.get("schedule_bind_external_message_id")
         index = int(callback_data.value) - 1
         if not selected_external or index < 0 or index >= len(internal_items):
             await call.message.answer("Не удалось определить дисциплину.")
@@ -161,7 +220,35 @@ async def schedule_callbacks(call: CallbackQuery, callback_data: ScheduleCallbac
             lesson_type=selected_external["lesson_type"],
             group_subject_id=subject_id,
         )
-        await call.message.answer(f"Привязка сохранена: {selected_external['discipline_label']} → {subject_name}")
+        await call.answer(f"Привязка сохранена: {selected_external['discipline_label']} → {subject_name}")
+        await _delete_message_by_id(call.message, call.message.message_id)
+        bindable = await list_bindable_subjects(session, group.id)
+        await state.update_data(
+            schedule_bind_items=bindable,
+            schedule_bind_external=None,
+            schedule_bind_internal_items=None,
+            schedule_bind_internal_message_id=None,
+        )
+        text = _render_external_bind_list(bindable, None)
+        if external_message_id:
+            try:
+                await call.message.bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=external_message_id,
+                    text=text,
+                    reply_markup=schedule_bind_subjects_kb(
+                        [(item["discipline_key"], item["discipline_label"]) for item in bindable]
+                    ),
+                )
+                return
+            except Exception:
+                pass
+        await call.message.answer(
+            text,
+            reply_markup=schedule_bind_subjects_kb(
+                [(item["discipline_key"], item["discipline_label"]) for item in bindable]
+            ),
+        )
         return
 
 
@@ -248,7 +335,11 @@ def _render_external_bind_list(items: list[dict[str, str]], selected_key: str | 
     for idx, item in enumerate(items, start=1):
         marker = "🟩 " if item["discipline_key"] == selected_key else ""
         lines.append(f"{marker}{idx}. {item['discipline_label']}")
-    return "\n".join(lines)
+        linked_subject_name = item.get("linked_subject_name")
+        if linked_subject_name:
+            lines.append(f"🔗 уже связано: {linked_subject_name}")
+        lines.append("")
+    return "\n".join(lines).strip()
 
 
 def _render_internal_bind_list(items: list[tuple[int, str]], source_label: str) -> str:

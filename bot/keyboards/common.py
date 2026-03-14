@@ -89,7 +89,6 @@ def back_kb() -> ReplyKeyboardMarkup:
 def subject_actions_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_PRIORITY)],
             [KeyboardButton(text=BTN_BACK_MENU)],
         ],
         resize_keyboard=True,
@@ -175,6 +174,7 @@ def subject_view_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
         rows.extend(nav.inline_keyboard)
     rows.extend(
         [
+            [InlineKeyboardButton(text="📊 Очередность сдачи", callback_data=ActionCallback(name="priority").pack())],
             [InlineKeyboardButton(text="↕️ Изменить сортировку", callback_data=ActionCallback(name="sort").pack())],
             [InlineKeyboardButton(text="✅ Отметить сдачу", callback_data=ActionCallback(name="mark").pack())],
             [InlineKeyboardButton(text="📈 Моя статистика", callback_data=ActionCallback(name="stats").pack())],

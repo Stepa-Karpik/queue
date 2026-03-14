@@ -96,3 +96,10 @@ async def deactivate_work_number(session: AsyncSession, group_subject_id: int, n
     work.is_active = False
     await session.commit()
     return True
+
+
+async def deactivate_last_work_number(session: AsyncSession, group_subject_id: int) -> bool:
+    numbers = await list_active_work_numbers(session, group_subject_id)
+    if not numbers:
+        return False
+    return await deactivate_work_number(session, group_subject_id, numbers[-1])

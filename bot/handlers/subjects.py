@@ -55,7 +55,7 @@ from bot.services.submissions import (
 from bot.services.users import get_effective_group, get_user_by_tg, is_admin_mode, is_admin_user
 from bot.states.admin import AdminStates
 from bot.states.subject import SubjectStates
-from bot.utils.names import format_full_name
+from bot.utils.names import format_full_name, format_short_name
 from bot.utils.render import render_progress_bar, render_work_row, score_to_grade
 
 router = Router()
@@ -88,6 +88,20 @@ async def _answer_chunked(message: Message, blocks: list[str]) -> None:
         await message.answer("\n\n".join(chunk).strip())
 
 
+def _build_priority_blocks(items: list[dict]) -> list[str]:
+    blocks = ["📊 Очередность сдачи\nЧем выше приоритет, тем раньше студенту стоит идти на сдачу."]
+    for idx, item in enumerate(items, start=1):
+        if item["is_inactive"]:
+            blocks.append(f"🟥 {item['short_name']} — неактивен")
+            continue
+        badge = {1: "1️⃣", 2: "2️⃣", 3: "3️⃣"}.get(idx, f"{idx}.")
+        blocks.append(
+            f"{badge} {item['short_name']} {render_progress_bar(item['completed'], item['total'])} "
+            f"{item['completed']}/{item['total']} • {item['priority'] * 100:.2f}%"
+        )
+    return blocks
+
+
 async def _delete_message_by_id(message: Message, message_id: int | None) -> None:
     if not message_id:
         return
@@ -97,9 +111,12 @@ async def _delete_message_by_id(message: Message, message_id: int | None) -> Non
         pass
 
 
-async def _set_subject_navigation(message: Message) -> int:
+async def _set_subject_navigation(message: Message) -> None:
     nav_message = await message.answer(SUBJECT_KEYBOARD_PING, reply_markup=subject_actions_kb())
-    return nav_message.message_id
+    try:
+        await nav_message.delete()
+    except Exception:
+        pass
 
 
 async def _update_subject_screen(
@@ -135,11 +152,9 @@ async def _close_subject_ui(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     await _delete_message_by_id(message, data.get("subject_picker_message_id"))
     await _delete_message_by_id(message, data.get("subject_screen_message_id"))
-    await _delete_message_by_id(message, data.get("subject_nav_message_id"))
     await state.update_data(
         subject_picker_message_id=None,
         subject_screen_message_id=None,
-        subject_nav_message_id=None,
         group_subject_id=None,
         subject_mode=None,
     )
@@ -198,8 +213,7 @@ async def subject_selected(call: CallbackQuery, callback_data: SubjectCallback, 
         subject_mode="dashboard",
     )
     await show_subject_view(call.message, session, state, force_new=True)
-    nav_message_id = await _set_subject_navigation(call.message)
-    await state.update_data(subject_nav_message_id=nav_message_id)
+    await _set_subject_navigation(call.message)
     await state.set_state(SubjectStates.viewing_subject)
 
 
@@ -227,9 +241,17 @@ async def show_subject_view(
 
     sort_by = data.get("sort", "alpha")
     if sort_by == "count":
-        students.sort(key=lambda s: len(subs_map.get(s.id, [])), reverse=True)
+        students.sort(
+            key=lambda s: (
+                s.is_inactive,
+                -len(subs_map.get(s.id, [])),
+                s.last_name,
+                s.first_name,
+                s.middle_name or "",
+            )
+        )
     else:
-        students.sort(key=lambda s: s.last_name)
+        students.sort(key=lambda s: (s.is_inactive, s.last_name, s.first_name, s.middle_name or ""))
 
     total_students = len(students)
     total_pages = max(1, (total_students + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -250,14 +272,19 @@ async def show_subject_view(
     ]
     if students[start:end]:
         for idx, student in enumerate(students[start:end], start=start + 1):
-            full_name = format_full_name(student.last_name, student.first_name, student.middle_name)
+            short_name = format_short_name(student.last_name, student.first_name, student.middle_name)
+            if student.is_inactive:
+                lines.append(f"{idx}. {short_name} 🟥")
+                continue
             submitted = subs_map.get(student.id, [])
-            lines.append(f"{idx}. {full_name} — {len(submitted)}/{total}")
+            lines.append(f"{idx}. {short_name} — {len(submitted)}/{total}")
             lines.append(render_work_row(active_numbers, submitted))
     else:
         lines.append("В группе пока нет студентов.")
     lines.append("")
-    lines.append("Легенда: 🟩 — сдано, цифра — номер несданной работы.")
+    lines.append(f"🟩 — сдано\n"
+                 "1️⃣ — номер несданной работы\n"
+                 "🟥 — неактивный студент")
 
     text = "\n".join(lines)
     await state.update_data(subject_mode="dashboard")
@@ -419,6 +446,22 @@ async def my_stats(call: CallbackQuery, session: AsyncSession, state: FSMContext
     await _update_subject_screen(call.message, state, "\n".join(lines), subject_back_kb())
 
 
+@router.callback_query(ActionCallback.filter(F.name == "priority"))
+async def priority_action(call: CallbackQuery, session: AsyncSession, state: FSMContext):
+    await call.answer()
+    data = await state.get_data()
+    group_subject_id = data.get("group_subject_id")
+    if not group_subject_id:
+        await call.message.answer("Сначала выберите дисциплину.")
+        return
+    items = await get_priority_list(session, group_subject_id)
+    if not items:
+        await call.message.answer("Нет данных для очередности.")
+        return
+    await state.update_data(subject_mode="priority")
+    await _update_subject_screen(call.message, state, "\n".join(_build_priority_blocks(items)), subject_back_kb())
+
+
 @router.callback_query(ActionCallback.filter(F.name == "admin_add_work"))
 async def admin_add_work(call: CallbackQuery, session: AsyncSession, state: FSMContext):
     await call.answer()
@@ -524,21 +567,7 @@ async def priority_list(message: Message, session: AsyncSession, state: FSMConte
     if not items:
         await message.answer("Нет данных для очередности.")
         return
-
-    blocks = [
-        "📊 Очередность сдачи\nЧем выше приоритет, тем раньше студенту стоит идти на сдачу."
-    ]
-    for idx, item in enumerate(items, start=1):
-        progress_bar = render_progress_bar(item["completed"], item["total"])
-        if item["is_inactive"]:
-            blocks.append(f"🟥 {item['short_name']} — неактивен")
-            continue
-        badge = {1: "1️⃣", 2: "2️⃣", 3: "3️⃣"}.get(idx, f"{idx}.")
-        blocks.append(
-            f"{badge} {item['short_name']} {progress_bar}\n"
-            f"Приоритет: {item['priority'] * 100:.2f}%"
-        )
-    await _answer_chunked(message, blocks)
+    await _answer_chunked(message, _build_priority_blocks(items))
 
 
 @router.message(F.text.in_(BACK_ALIASES))

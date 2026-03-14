@@ -64,5 +64,5 @@ def schedule_bind_internal_kb(items: list[tuple[int, str]], selected_subject_id:
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=ScheduleCallback(action="bind", value="0").pack())])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=ScheduleCallback(action="back_internal_bind", value="0").pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
