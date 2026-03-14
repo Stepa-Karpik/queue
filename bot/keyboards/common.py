@@ -134,6 +134,7 @@ def sort_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="По фамилии (А-Я)", callback_data=SortCallback(by="alpha").pack())],
             [InlineKeyboardButton(text="По прогрессу (сначала активные)", callback_data=SortCallback(by="count").pack())],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=ActionCallback(name="subject_back").pack())],
         ]
     )
 
@@ -167,13 +168,27 @@ def students_kb(items: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def subject_inline_actions_kb() -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="↕️ Изменить сортировку", callback_data=ActionCallback(name="sort").pack())],
-        [InlineKeyboardButton(text="✅ Отметить сдачу", callback_data=ActionCallback(name="mark").pack())],
-        [InlineKeyboardButton(text="📈 Моя статистика", callback_data=ActionCallback(name="stats").pack())],
-    ]
+def subject_view_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    nav = pagination_kb("subject", page, total_pages)
+    if nav:
+        rows.extend(nav.inline_keyboard)
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="↕️ Изменить сортировку", callback_data=ActionCallback(name="sort").pack())],
+            [InlineKeyboardButton(text="✅ Отметить сдачу", callback_data=ActionCallback(name="mark").pack())],
+            [InlineKeyboardButton(text="📈 Моя статистика", callback_data=ActionCallback(name="stats").pack())],
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subject_back_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=ActionCallback(name="subject_back").pack())]
+        ]
+    )
 
 
 def score_optional_kb() -> InlineKeyboardMarkup:

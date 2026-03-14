@@ -5,6 +5,14 @@ def normalize_name(value: str) -> str:
     return " ".join(value.strip().split())
 
 
+def normalize_compare_text(value: str) -> str:
+    return normalize_name(value).replace("Ё", "Е").replace("ё", "е")
+
+
+def normalize_group_name(value: str) -> str:
+    return normalize_compare_text(value).upper()
+
+
 def split_full_name(value: str) -> tuple[str, str, str | None]:
     parts = normalize_name(value).split(" ")
     if len(parts) < 2:

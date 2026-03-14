@@ -40,6 +40,18 @@ async def get_user_by_student(session: AsyncSession, student_id: int) -> User | 
     return result.scalar_one_or_none()
 
 
+async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
+    result = await session.execute(
+        select(User)
+        .options(
+            joinedload(User.student).joinedload(Student.group).joinedload(Group.faculty),
+            joinedload(User.admin_group).joinedload(Group.faculty),
+        )
+        .where(User.id == user_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def create_user(
     session: AsyncSession,
     tg_id: int,

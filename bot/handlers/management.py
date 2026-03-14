@@ -47,7 +47,7 @@ from bot.services.subjects import add_work_number, create_subject_with_works, de
 from bot.services.submissions import delete_submission, list_submitted_numbers, submit_work
 from bot.services.users import get_effective_group, get_user_by_tg, is_admin_mode, is_admin_user
 from bot.states.management import ManagementStates
-from bot.utils.names import format_full_name, format_short_name, split_full_name
+from bot.utils.names import format_full_name, format_short_name, normalize_group_name, split_full_name
 
 router = Router()
 PAGE_SIZE = 8
@@ -74,7 +74,7 @@ async def open_management_panel(message: Message, state: FSMContext, session: As
     await state.update_data(mg_group_id=group.id, mg_users_page=1, mg_subjects_page=1)
     await state.set_state(ManagementStates.viewing_panel)
     await message.answer(
-        f"Режим управления группой {group.name} включен.\nВыберите раздел:",
+        f"Режим управления группой {normalize_group_name(group.name)} включен.\nВыберите раздел:",
         reply_markup=management_main_kb(),
     )
 

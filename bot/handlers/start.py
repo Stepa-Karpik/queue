@@ -11,7 +11,7 @@ from bot.services.roster import get_or_create_faculty, get_or_create_group
 from bot.services.students import find_student_by_full_name, find_students_by_last_name, get_student_group
 from bot.services.users import ensure_user, get_user_by_student, get_user_by_tg, is_admin_mode, is_admin_user
 from bot.states.registration import RegistrationStates
-from bot.utils.names import format_full_name, normalize_name, split_full_name
+from bot.utils.names import format_full_name, normalize_group_name, normalize_name, split_full_name
 
 router = Router()
 
@@ -92,7 +92,7 @@ async def full_name_handler(message: Message, state: FSMContext, session: AsyncS
 
     await state.update_data(candidate_id=student.id)
     group = await get_student_group(session, student.id)
-    group_name = group.name if group else "—"
+    group_name = normalize_group_name(group.name) if group else "—"
     await message.answer(
         f"{format_full_name(student.last_name, student.first_name, student.middle_name)}. {group_name}, верно?",
         reply_markup=confirm_kb("confirm_student", str(student.id)),
@@ -165,7 +165,7 @@ async def self_faculty(message: Message, state: FSMContext):
 
 @router.message(RegistrationStates.waiting_self_group)
 async def self_group(message: Message, state: FSMContext):
-    await state.update_data(self_group=normalize_name(message.text or ""))
+    await state.update_data(self_group=normalize_group_name(message.text or ""))
     await message.answer(
         "Вы староста группы?",
         reply_markup=confirm_kb("self_starosta", "yes"),

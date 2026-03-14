@@ -9,6 +9,7 @@ from bot.services.import_list import parse_excel, parse_text_list
 from bot.services.roster import add_students_to_group
 from bot.services.users import get_effective_group, get_user_by_tg, is_admin_mode
 from bot.states.list_import import ListImportStates
+from bot.utils.names import normalize_group_name
 
 router = Router()
 
@@ -26,7 +27,7 @@ async def list_start(message: Message, state: FSMContext, session: AsyncSession)
         return
 
     await state.clear()
-    await message.answer(f"Отправьте список студентов для группы {group.name} (текст, .txt или .xlsx).")
+    await message.answer(f"Отправьте список студентов для группы {normalize_group_name(group.name)} (текст, .txt или .xlsx).")
     await state.set_state(ListImportStates.waiting_list)
 
 
@@ -68,5 +69,5 @@ async def list_upload(message: Message, state: FSMContext, session: AsyncSession
     group.roster_loaded = True
     await session.commit()
 
-    await message.answer(f"Загружено студентов в группу {group.name}: {count}")
+    await message.answer(f"Загружено студентов в группу {normalize_group_name(group.name)}: {count}")
     await state.clear()

@@ -92,7 +92,7 @@ async def list_group_students_with_user(session: AsyncSession, group_id: int) ->
 
 
 async def get_student_with_user(session: AsyncSession, student_id: int) -> Student | None:
-    stmt = select(Student).options(joinedload(Student.user)).where(Student.id == student_id)
+    stmt = select(Student).options(joinedload(Student.user), joinedload(Student.group)).where(Student.id == student_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -131,6 +131,15 @@ async def update_student_full_name(
     student.middle_name = normalize_name(middle_name) if middle_name else None
     await session.commit()
     return True
+
+
+async def reassign_student_group(session: AsyncSession, student_id: int, group_id: int) -> tuple[bool, str]:
+    student = await get_student_with_user(session, student_id)
+    if not student:
+        return False, "Пользователь не найден."
+    student.group_id = group_id
+    await session.commit()
+    return True, "Группа пользователя обновлена."
 
 
 async def toggle_student_inactive(session: AsyncSession, student_id: int) -> tuple[bool, str]:

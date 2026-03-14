@@ -12,11 +12,11 @@ from bot.keyboards.common import (
     main_menu_kb,
     subjects_kb,
     subject_actions_kb,
-    subject_inline_actions_kb,
+    subject_back_kb,
+    subject_view_kb,
     admin_add_subject_kind_kb,
     sort_kb,
     works_kb,
-    pagination_kb,
     students_paginated_kb,
     admin_remove_works_kb,
     confirm_kb,
@@ -61,6 +61,7 @@ from bot.utils.render import render_progress_bar, render_work_row, score_to_grad
 router = Router()
 PAGE_SIZE = 5
 TEXT_LIMIT = 3800
+SUBJECT_KEYBOARD_PING = "\u2060"
 
 
 async def _student_can_use_subject_actions(session: AsyncSession, user, group_subject_id: int) -> bool:
@@ -87,6 +88,63 @@ async def _answer_chunked(message: Message, blocks: list[str]) -> None:
         await message.answer("\n\n".join(chunk).strip())
 
 
+async def _delete_message_by_id(message: Message, message_id: int | None) -> None:
+    if not message_id:
+        return
+    try:
+        await message.bot.delete_message(chat_id=message.chat.id, message_id=message_id)
+    except Exception:
+        pass
+
+
+async def _set_subject_navigation(message: Message) -> int:
+    nav_message = await message.answer(SUBJECT_KEYBOARD_PING, reply_markup=subject_actions_kb())
+    return nav_message.message_id
+
+
+async def _update_subject_screen(
+    message: Message,
+    state: FSMContext,
+    text: str,
+    reply_markup,
+    *,
+    force_new: bool = False,
+) -> None:
+    data = await state.get_data()
+    screen_message_id = data.get("subject_screen_message_id")
+    if not force_new and screen_message_id:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=screen_message_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
+            return
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc):
+                return
+        except Exception:
+            pass
+
+    screen_message = await message.answer(text, reply_markup=reply_markup)
+    await state.update_data(subject_screen_message_id=screen_message.message_id)
+
+
+async def _close_subject_ui(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    await _delete_message_by_id(message, data.get("subject_picker_message_id"))
+    await _delete_message_by_id(message, data.get("subject_screen_message_id"))
+    await _delete_message_by_id(message, data.get("subject_nav_message_id"))
+    await state.update_data(
+        subject_picker_message_id=None,
+        subject_screen_message_id=None,
+        subject_nav_message_id=None,
+        group_subject_id=None,
+        subject_mode=None,
+    )
+
+
 @router.message(F.text.in_(LABS_ALIASES))
 async def labs_handler(message: Message, session: AsyncSession, state: FSMContext):
     await show_subjects(message, session, state, SubjectKind.LAB)
@@ -99,6 +157,7 @@ async def practice_handler(message: Message, session: AsyncSession, state: FSMCo
 
 async def show_subjects(message: Message, session: AsyncSession, state: FSMContext, kind: SubjectKind):
     await clear_score_prompt(message, state)
+    await _close_subject_ui(message, state)
     user = await get_user_by_tg(session, message.from_user.id)
     if not user:
         await message.answer("Сначала зарегистрируйтесь через /start.")
@@ -118,19 +177,29 @@ async def show_subjects(message: Message, session: AsyncSession, state: FSMConte
         return
 
     await state.update_data(kind=kind.value)
-    await message.answer(
+    picker_message = await message.answer(
         "Выберите дисциплину из списка ниже.\n"
         "После выбора откроется журнал группы и быстрые действия.",
         reply_markup=subjects_kb(items),
     )
+    await state.update_data(subject_picker_message_id=picker_message.message_id)
 
 
 @router.callback_query(SubjectCallback.filter())
 async def subject_selected(call: CallbackQuery, callback_data: SubjectCallback, session: AsyncSession, state: FSMContext):
     await call.answer()
     await clear_score_prompt(call.message, state)
-    await state.update_data(group_subject_id=callback_data.group_subject_id, sort="alpha", page_subject=1)
-    await show_subject_view(call.message, session, state)
+    await _delete_message_by_id(call.message, call.message.message_id)
+    await state.update_data(
+        group_subject_id=callback_data.group_subject_id,
+        sort="alpha",
+        page_subject=1,
+        subject_picker_message_id=None,
+        subject_mode="dashboard",
+    )
+    await show_subject_view(call.message, session, state, force_new=True)
+    nav_message_id = await _set_subject_navigation(call.message)
+    await state.update_data(subject_nav_message_id=nav_message_id)
     await state.set_state(SubjectStates.viewing_subject)
 
 
@@ -138,7 +207,7 @@ async def show_subject_view(
     message: Message,
     session: AsyncSession,
     state: FSMContext,
-    edit_message: Message | None = None,
+    force_new: bool = False,
 ):
     data = await state.get_data()
     group_subject_id = data.get("group_subject_id")
@@ -190,76 +259,22 @@ async def show_subject_view(
     lines.append("")
     lines.append("Легенда: 🟩 — сдано, цифра — номер несданной работы.")
 
-    page_kb = pagination_kb("subject", page, total_pages)
     text = "\n".join(lines)
-
-    state_data = await state.get_data()
-    list_msg_id = state_data.get("subject_list_message_id")
-    actions_msg_id = state_data.get("subject_actions_message_id")
-
-    if edit_message:
-        try:
-            await edit_message.edit_text(text, reply_markup=page_kb)
-            await state.update_data(subject_list_message_id=edit_message.message_id)
-        except TelegramBadRequest as exc:
-            if "message is not modified" in str(exc):
-                pass
-            else:
-                list_msg = await message.answer(text, reply_markup=page_kb)
-                await state.update_data(subject_list_message_id=list_msg.message_id)
-        except Exception:
-            list_msg = await message.answer(text, reply_markup=page_kb)
-            await state.update_data(subject_list_message_id=list_msg.message_id)
-    elif list_msg_id:
-        try:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=list_msg_id,
-                text=text,
-                reply_markup=page_kb,
-            )
-        except TelegramBadRequest as exc:
-            if "message is not modified" in str(exc):
-                pass
-            else:
-                list_msg = await message.answer(text, reply_markup=page_kb)
-                await state.update_data(subject_list_message_id=list_msg.message_id)
-        except Exception:
-            list_msg = await message.answer(text, reply_markup=page_kb)
-            await state.update_data(subject_list_message_id=list_msg.message_id)
-    else:
-        list_msg = await message.answer(text, reply_markup=page_kb)
-        await state.update_data(subject_list_message_id=list_msg.message_id)
-
-    actions_text = "Быстрые действия по дисциплине:"
-    actions_kb = subject_inline_actions_kb()
-    if actions_msg_id:
-        try:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=actions_msg_id,
-                text=actions_text,
-                reply_markup=actions_kb,
-            )
-        except TelegramBadRequest as exc:
-            if "message is not modified" in str(exc):
-                pass
-            else:
-                actions_msg = await message.answer(actions_text, reply_markup=actions_kb)
-                await state.update_data(subject_actions_message_id=actions_msg.message_id)
-        except Exception:
-            actions_msg = await message.answer(actions_text, reply_markup=actions_kb)
-            await state.update_data(subject_actions_message_id=actions_msg.message_id)
-    else:
-        actions_msg = await message.answer(actions_text, reply_markup=actions_kb)
-        await state.update_data(subject_actions_message_id=actions_msg.message_id)
-        await message.answer("Навигация:", reply_markup=subject_actions_kb())
+    await state.update_data(subject_mode="dashboard")
+    await _update_subject_screen(
+        message,
+        state,
+        text,
+        subject_view_kb(page, total_pages),
+        force_new=force_new,
+    )
 
 
 @router.callback_query(ActionCallback.filter(F.name == "sort"))
 async def sort_action(call: CallbackQuery, state: FSMContext):
     await call.answer()
-    await call.message.answer("Выберите способ сортировки списка:", reply_markup=sort_kb())
+    await state.update_data(subject_mode="sort")
+    await _update_subject_screen(call.message, state, "Выберите способ сортировки списка:", sort_kb())
 
 
 @router.callback_query(SortCallback.filter())
@@ -273,7 +288,7 @@ async def apply_sort(call: CallbackQuery, callback_data: SortCallback, session: 
 async def subject_page(call: CallbackQuery, callback_data: PageCallback, session: AsyncSession, state: FSMContext):
     await call.answer()
     await state.update_data(page_subject=callback_data.page)
-    await show_subject_view(call.message, session, state, edit_message=call.message)
+    await show_subject_view(call.message, session, state)
 
 
 @router.callback_query(ActionCallback.filter(F.name == "mark"))
@@ -400,7 +415,8 @@ async def my_stats(call: CallbackQuery, session: AsyncSession, state: FSMContext
     lines.append("")
     lines.append(f"Средний балл: {int(avg_score)}")
     lines.append(f"Оценка: {grade}")
-    await call.message.answer("\n".join(lines))
+    await state.update_data(subject_mode="stats")
+    await _update_subject_screen(call.message, state, "\n".join(lines), subject_back_kb())
 
 
 @router.callback_query(ActionCallback.filter(F.name == "admin_add_work"))
@@ -528,6 +544,7 @@ async def priority_list(message: Message, session: AsyncSession, state: FSMConte
 @router.message(F.text.in_(BACK_ALIASES))
 async def back_to_menu(message: Message, state: FSMContext, session: AsyncSession):
     await clear_score_prompt(message, state)
+    await _close_subject_ui(message, state)
     await state.clear()
     user = await get_user_by_tg(session, message.from_user.id)
     is_starosta = bool(user and user.role == Role.STAROSTA.value)
@@ -560,6 +577,13 @@ async def mark_back(call: CallbackQuery, session: AsyncSession, state: FSMContex
     await show_subject_view(call.message, session, state)
 
 
+@router.callback_query(ActionCallback.filter(F.name == "subject_back"))
+async def subject_back(call: CallbackQuery, session: AsyncSession, state: FSMContext):
+    await call.answer()
+    await clear_score_prompt(call.message, state)
+    await show_subject_view(call.message, session, state)
+
+
 @router.callback_query(ActionCallback.filter(F.name == "no_score"))
 async def no_score_submit(call: CallbackQuery, session: AsyncSession, state: FSMContext):
     await call.answer()
@@ -583,7 +607,8 @@ async def no_score_submit(call: CallbackQuery, session: AsyncSession, state: FSM
 async def cancel_score_submit(call: CallbackQuery, session: AsyncSession, state: FSMContext):
     await call.answer()
     await clear_score_prompt(call.message, state)
-    await state.set_state(SubjectStates.viewing_subject)
+    await show_work_selection(call.message, session, state)
+    await state.set_state(SubjectStates.marking_work)
 
 
 async def show_work_selection(message: Message, session: AsyncSession, state: FSMContext):
@@ -602,47 +627,18 @@ async def show_work_selection(message: Message, session: AsyncSession, state: FS
     submitted_numbers = await list_submitted_numbers(session, student_id, group_subject_id)
     text = "Выберите номер работы для отметки:\n🟩 — работа уже отмечена."
     reply_markup = works_kb(numbers, submitted_numbers)
-
-    same_context = (
-        data.get("mark_group_subject_id") == group_subject_id
-        and data.get("mark_student_id") == student_id
-    )
-    mark_message_id = data.get("mark_message_id") if same_context else None
-
-    if mark_message_id:
-        try:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=mark_message_id,
-                text=text,
-                reply_markup=reply_markup,
-            )
-        except TelegramBadRequest as exc:
-            if "message is not modified" not in str(exc):
-                mark_message = await message.answer(text, reply_markup=reply_markup)
-                mark_message_id = mark_message.message_id
-        except Exception:
-            mark_message = await message.answer(text, reply_markup=reply_markup)
-            mark_message_id = mark_message.message_id
-    else:
-        mark_message = await message.answer(text, reply_markup=reply_markup)
-        mark_message_id = mark_message.message_id
-
     await state.update_data(
-        mark_message_id=mark_message_id,
+        subject_mode="mark",
         mark_group_subject_id=group_subject_id,
         mark_student_id=student_id,
     )
+    await _update_subject_screen(message, state, text, reply_markup)
 
 
 async def clear_score_prompt(message: Message, state: FSMContext):
     data = await state.get_data()
     prompt_message_id = data.get("score_prompt_message_id")
-    if prompt_message_id:
-        try:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=prompt_message_id)
-        except Exception:
-            pass
+    await _delete_message_by_id(message, prompt_message_id)
     await state.update_data(score_prompt_message_id=None, work_number=None)
 
 
@@ -658,9 +654,8 @@ async def refresh_submission_ui(
             await cleanup_message.delete()
         except Exception:
             pass
-    await show_subject_view(message, session, state)
     await show_work_selection(message, session, state)
-    await state.set_state(SubjectStates.viewing_subject)
+    await state.set_state(SubjectStates.marking_work)
 
 
 async def show_student_selection(message: Message, session: AsyncSession, state: FSMContext):

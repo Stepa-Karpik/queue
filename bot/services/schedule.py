@@ -22,7 +22,7 @@ from bot.models import (
     ScheduleWeekType,
     SubjectKind,
 )
-from bot.utils.names import normalize_name
+from bot.utils.names import normalize_group_name, normalize_name
 
 MSK = ZoneInfo("Europe/Moscow")
 DAY_LABELS = {
@@ -161,7 +161,7 @@ def parse_schedule_excel(data: bytes) -> tuple[str | None, date, list[ParsedSche
         discipline_without_type = parts[1].strip() if len(parts) > 1 else raw_discipline
         discipline_base, subgroup = _normalize_subject_base(discipline_without_type)
         discipline_key = build_discipline_key(lesson_type, discipline_base)
-        group_name = normalize_name(str(row[7])) if row[7] else group_name
+        group_name = normalize_group_name(str(row[7])) if row[7] else group_name
 
         entries.append(
             ParsedScheduleEntry(

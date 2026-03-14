@@ -1,7 +1,8 @@
-﻿from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.models import Faculty, Group, Student
+from bot.utils.names import normalize_group_name
 
 
 async def get_or_create_faculty(session: AsyncSession, name: str) -> Faculty:
@@ -17,11 +18,22 @@ async def get_or_create_faculty(session: AsyncSession, name: str) -> Faculty:
 
 
 async def get_or_create_group(session: AsyncSession, name: str, faculty_id: int) -> Group:
-    result = await session.execute(select(Group).where(Group.name == name))
+    normalized_name = normalize_group_name(name)
+    result = await session.execute(select(Group).where(func.upper(Group.name) == normalized_name))
     group = result.scalar_one_or_none()
     if group:
+        updated = False
+        if group.name != normalized_name:
+            group.name = normalized_name
+            updated = True
+        if group.faculty_id != faculty_id:
+            group.faculty_id = faculty_id
+            updated = True
+        if updated:
+            await session.commit()
+            await session.refresh(group)
         return group
-    group = Group(name=name, faculty_id=faculty_id)
+    group = Group(name=normalized_name, faculty_id=faculty_id)
     session.add(group)
     await session.commit()
     await session.refresh(group)
