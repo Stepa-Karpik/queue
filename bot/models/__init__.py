@@ -1,7 +1,9 @@
 from bot.models.entities import (
     Faculty,
     Group,
+    GroupTeacher,
     GroupSubject,
+    NotificationMode,
     Role,
     ScheduleBinding,
     ScheduleEntry,
@@ -15,12 +17,15 @@ from bot.models.entities import (
     SubjectWork,
     Submission,
     User,
+    UserNotificationSubject,
 )
 
 __all__ = [
     "Faculty",
     "Group",
+    "GroupTeacher",
     "GroupSubject",
+    "NotificationMode",
     "Role",
     "ScheduleBinding",
     "ScheduleEntry",
@@ -34,4 +39,5 @@ __all__ = [
     "SubjectWork",
     "Submission",
     "User",
+    "UserNotificationSubject",
 ]

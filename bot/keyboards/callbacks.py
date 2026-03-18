@@ -27,6 +27,17 @@ class ActionCallback(CallbackData, prefix="action"):
     name: str
 
 
+class ProfileCallback(CallbackData, prefix="profile"):
+    section: str
+    action: str
+    value: str
+
+
+class GroupMenuCallback(CallbackData, prefix="group_menu"):
+    action: str
+    value: str
+
+
 class PageCallback(CallbackData, prefix="page"):
     action: str
     page: int
@@ -97,6 +108,21 @@ class ManageRoleCallback(CallbackData, prefix="mg_role"):
     role: str
 
 
+class ManageTeacherCallback(CallbackData, prefix="mg_teacher"):
+    action: str
+    teacher_id: int
+
+
+class ManageTeacherDisciplineCallback(CallbackData, prefix="mg_teacher_discipline"):
+    action: str
+    option_index: int
+
+
+class ManageTeacherLessonTypeCallback(CallbackData, prefix="mg_teacher_lesson"):
+    action: str
+    option_index: int
+
+
 class ManageSubmissionCallback(CallbackData, prefix="mg_submit"):
     action: str
     value: int
@@ -128,6 +154,16 @@ class ManageRemoveWorkCallback(CallbackData, prefix="mg_remove_work"):
 class AdminPanelCallback(CallbackData, prefix="ad_panel"):
     action: str
     value: str
+
+
+class AdminUserRoleCallback(CallbackData, prefix="ad_user_role"):
+    user_id: int
+    role: str
+
+
+class AdminUserGroupCallback(CallbackData, prefix="ad_user_group"):
+    user_id: int
+    group_id: int
 
 
 class ScheduleCallback(CallbackData, prefix="schedule"):

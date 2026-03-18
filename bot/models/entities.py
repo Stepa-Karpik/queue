@@ -26,6 +26,13 @@ class Role(str, Enum):
     ADMIN = "admin"
 
 
+class NotificationMode(str, Enum):
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+    AUTO = "auto"
+    MANUAL = "manual"
+
+
 class SubjectKind(str, Enum):
     LAB = "lab"
     PRACTICE = "practice"
@@ -65,6 +72,7 @@ class Group(Base):
     group_subjects: Mapped[list[GroupSubject]] = relationship("GroupSubject", back_populates="group")
     schedule_templates: Mapped[list[ScheduleTemplate]] = relationship("ScheduleTemplate", back_populates="group")
     schedule_bindings: Mapped[list[ScheduleBinding]] = relationship("ScheduleBinding", back_populates="group")
+    teachers: Mapped[list[GroupTeacher]] = relationship("GroupTeacher", back_populates="group")
 
 
 class Student(Base):
@@ -89,12 +97,14 @@ class User(Base):
     tg_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     username: Mapped[str | None] = mapped_column(String(64))
     role: Mapped[str] = mapped_column(String(16), default=Role.STUDENT.value)
+    notification_mode: Mapped[str] = mapped_column(String(16), default=NotificationMode.AUTO.value)
     student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id"))
     admin_group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"))
     is_admin_mode: Mapped[bool] = mapped_column(Boolean, default=False)
 
     student: Mapped[Student | None] = relationship("Student", back_populates="user")
     admin_group: Mapped[Group | None] = relationship("Group")
+    manual_notification_subjects: Mapped[list[UserNotificationSubject]] = relationship("UserNotificationSubject", back_populates="user")
 
 
 class Subject(Base):
@@ -120,6 +130,7 @@ class GroupSubject(Base):
     works: Mapped[list[SubjectWork]] = relationship("SubjectWork", back_populates="group_subject")
     submissions: Mapped[list[Submission]] = relationship("Submission", back_populates="group_subject")
     schedule_bindings: Mapped[list[ScheduleBinding]] = relationship("ScheduleBinding", back_populates="group_subject")
+    notification_users: Mapped[list[UserNotificationSubject]] = relationship("UserNotificationSubject", back_populates="group_subject")
 
     __table_args__ = (UniqueConstraint("group_id", "subject_id", name="uq_group_subject"),)
 
@@ -151,6 +162,33 @@ class Submission(Base):
     group_subject: Mapped[GroupSubject] = relationship("GroupSubject", back_populates="submissions")
 
     __table_args__ = (UniqueConstraint("student_id", "group_subject_id", "work_number", name="uq_submission"),)
+
+
+class UserNotificationSubject(Base):
+    __tablename__ = "user_notification_subjects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    group_subject_id: Mapped[int] = mapped_column(ForeignKey("group_subjects.id"), nullable=False)
+
+    user: Mapped[User] = relationship("User", back_populates="manual_notification_subjects")
+    group_subject: Mapped[GroupSubject] = relationship("GroupSubject", back_populates="notification_users")
+
+    __table_args__ = (UniqueConstraint("user_id", "group_subject_id", name="uq_user_notification_subject"),)
+
+
+class GroupTeacher(Base):
+    __tablename__ = "group_teachers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), nullable=False)
+    discipline: Mapped[str] = mapped_column(String(255), nullable=False)
+    lesson_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    group: Mapped[Group] = relationship("Group", back_populates="teachers")
+
+    __table_args__ = (UniqueConstraint("group_id", "discipline", "lesson_type", "full_name", name="uq_group_teacher_slot"),)
 
 
 class ScheduleTemplate(Base):

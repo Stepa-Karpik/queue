@@ -27,7 +27,7 @@ async def get_user_by_tg(session: AsyncSession, tg_id: int) -> User | None:
     result = await session.execute(
         select(User)
         .options(
-            joinedload(User.student),
+            joinedload(User.student).joinedload(Student.group).joinedload(Group.faculty),
             joinedload(User.admin_group).joinedload(Group.faculty),
         )
         .where(User.tg_id == tg_id)

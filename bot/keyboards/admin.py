@@ -1,6 +1,6 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.keyboards.callbacks import AdminPanelCallback
+from bot.keyboards.callbacks import AdminPanelCallback, AdminUserGroupCallback, AdminUserRoleCallback
 from bot.models import Role
 
 
@@ -44,11 +44,11 @@ def admin_user_role_kb(user_id: int, current_role: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=student_label,
-                    callback_data=AdminPanelCallback(action="user_set_role", value=f"{user_id}:{Role.STUDENT.value}").pack(),
+                    callback_data=AdminUserRoleCallback(user_id=user_id, role=Role.STUDENT.value).pack(),
                 ),
                 InlineKeyboardButton(
                     text=starosta_label,
-                    callback_data=AdminPanelCallback(action="user_set_role", value=f"{user_id}:{Role.STAROSTA.value}").pack(),
+                    callback_data=AdminUserRoleCallback(user_id=user_id, role=Role.STAROSTA.value).pack(),
                 ),
             ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=AdminPanelCallback(action="user_view", value=str(user_id)).pack())],
@@ -61,7 +61,7 @@ def admin_user_groups_kb(items: list[tuple[int, str]], user_id: int, page: int, 
         [
             InlineKeyboardButton(
                 text=label,
-                callback_data=AdminPanelCallback(action="user_pick_group", value=f"{user_id}:{group_id}").pack(),
+                callback_data=AdminUserGroupCallback(user_id=user_id, group_id=group_id).pack(),
             )
         ]
         for group_id, label in items

@@ -9,3 +9,5 @@ class ManagementStates(StatesGroup):
     waiting_add_user_full_name = State()
     waiting_edit_user_full_name = State()
     waiting_submission_score = State()
+    waiting_add_teacher_name = State()
+    waiting_edit_teacher_name = State()

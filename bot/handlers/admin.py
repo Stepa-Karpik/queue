@@ -11,7 +11,7 @@ from bot.keyboards.admin import (
     admin_user_role_kb,
     admin_users_kb,
 )
-from bot.keyboards.callbacks import AdminPanelCallback, ConfirmCallback
+from bot.keyboards.callbacks import AdminPanelCallback, AdminUserGroupCallback, AdminUserRoleCallback, ConfirmCallback
 from bot.keyboards.common import (
     ADMIN_ALIASES,
     ADMIN_BROADCAST_ALIASES,
@@ -278,6 +278,44 @@ async def admin_callbacks(call: CallbackQuery, callback_data: AdminPanelCallback
             reply_markup=confirm_kb("admin_delete_user", str(target.id)),
         )
         return
+
+
+@router.callback_query(AdminUserRoleCallback.filter())
+async def admin_set_user_role(call: CallbackQuery, callback_data: AdminUserRoleCallback, session: AsyncSession):
+    await call.answer()
+    user = await _require_admin(session, call.from_user.id)
+    if not user:
+        await call.message.answer("РЎРЅР°С‡Р°Р»Р° РІРєР»СЋС‡РёС‚Рµ СЂРµР¶РёРј Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°.")
+        return
+
+    target = await get_user_by_id(session, callback_data.user_id)
+    if not target or not target.student_id:
+        await call.message.answer("РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ.")
+        return
+
+    role = Role.STAROSTA if callback_data.role == Role.STAROSTA.value else Role.STUDENT
+    ok, text = await set_role_for_student_user(session, target.student_id, role)
+    if not ok:
+        await call.message.answer(text)
+        return
+    await show_registered_user_card(call.message, session, target.id, edit=True, flash_text=text)
+
+
+@router.callback_query(AdminUserGroupCallback.filter())
+async def admin_pick_user_group(call: CallbackQuery, callback_data: AdminUserGroupCallback, session: AsyncSession):
+    await call.answer()
+    user = await _require_admin(session, call.from_user.id)
+    if not user:
+        await call.message.answer("РЎРЅР°С‡Р°Р»Р° РІРєР»СЋС‡РёС‚Рµ СЂРµР¶РёРј Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°.")
+        return
+
+    target = await get_user_by_id(session, callback_data.user_id)
+    if not target or not target.student_id:
+        await call.message.answer("РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ.")
+        return
+
+    ok, text = await reassign_student_group(session, target.student_id, callback_data.group_id)
+    await show_registered_user_card(call.message, session, target.id, edit=True, flash_text=text if ok else text)
 
 
 @router.callback_query(ConfirmCallback.filter(F.action == "admin_delete_user"))

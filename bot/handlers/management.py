@@ -14,6 +14,9 @@ from bot.keyboards.callbacks import (
     ManageSubmissionWorkCallback,
     ManageStudentCallback,
     ManageSubjectCallback,
+    ManageTeacherCallback,
+    ManageTeacherDisciplineCallback,
+    ManageTeacherLessonTypeCallback,
 )
 from bot.keyboards.common import STAROSTA_ALIASES, main_menu_kb
 from bot.keyboards.management import (
@@ -29,6 +32,10 @@ from bot.keyboards.management import (
     management_subjects_menu_kb,
     management_submission_subjects_kb,
     management_submission_works_kb,
+    management_teacher_disciplines_kb,
+    management_teacher_lesson_types_kb,
+    management_teachers_kb,
+    management_teachers_menu_kb,
     management_user_card_kb,
     management_users_menu_kb,
 )
@@ -50,6 +57,16 @@ from bot.services.admin_panel import (
 from bot.services.subjects import add_work_number, create_subject_with_works, deactivate_work_number, list_active_work_numbers
 from bot.services.subjects import deactivate_last_work_number
 from bot.services.submissions import delete_submission, list_submitted_numbers, submit_work
+from bot.services.teachers import (
+    add_group_teacher,
+    delete_group_teacher,
+    get_group_teacher,
+    list_group_teachers_for_slot,
+    list_teacher_disciplines,
+    list_teacher_lesson_types,
+    rename_group_teacher,
+    replace_group_teachers_from_schedule,
+)
 from bot.services.users import get_effective_group, get_user_by_tg, is_admin_mode, is_admin_user
 from bot.states.management import ManagementStates
 from bot.utils.admin_state import cancel_admin_broadcast_flow
@@ -59,6 +76,7 @@ from bot.utils.submission_flow import (
     get_submission_subject_prompt,
     get_submission_work_prompt,
 )
+from bot.utils.teacher_names import teacher_lesson_type_label
 
 router = Router()
 PAGE_SIZE = 8
@@ -105,6 +123,9 @@ async def management_main_actions(call: CallbackQuery, callback_data: ManageMenu
     if callback_data.action == "subjects":
         await call.message.edit_text("Управление дисциплинами:", reply_markup=management_subjects_menu_kb())
         return
+    if callback_data.action == "teachers":
+        await call.message.edit_text("Управление преподавателями:", reply_markup=management_teachers_menu_kb())
+        return
     if callback_data.action == "exit":
         await state.set_state(ManagementStates.viewing_panel)
         await call.message.edit_text("Режим управления выключен.")
@@ -135,6 +156,41 @@ async def users_menu_actions(call: CallbackQuery, callback_data: ManageMenuCallb
         return
     if callback_data.action == "back":
         await call.message.edit_text("Выберите раздел:", reply_markup=management_main_kb())
+
+
+@router.callback_query(ManageMenuCallback.filter(F.section == "teachers"))
+async def teachers_menu_actions(call: CallbackQuery, callback_data: ManageMenuCallback, state: FSMContext, session: AsyncSession):
+    await call.answer()
+    _, group = await _get_actor_and_group(session, call.from_user.id)
+    if not group:
+        await call.message.answer("Сначала выберите группу.")
+        return
+
+    if callback_data.action in {"add", "edit", "delete"}:
+        await state.set_state(ManagementStates.viewing_panel)
+        await show_teacher_disciplines(call.message, session, state, group.id, callback_data.action, edit=True)
+        return
+    if callback_data.action == "parse":
+        await call.message.answer(
+            "Вы уверены? Все ручные изменения будут удалены.",
+            reply_markup=_confirm("mg_parse_teachers", str(group.id)),
+        )
+        return
+    if callback_data.action == "back":
+        await call.message.edit_text("Выберите раздел:", reply_markup=management_main_kb())
+
+
+@router.callback_query(ManageMenuCallback.filter(F.section == "teacher_types"))
+async def teacher_types_back(call: CallbackQuery, state: FSMContext, session: AsyncSession):
+    await call.answer()
+    data = await state.get_data()
+    group_id = data.get("mg_group_id")
+    action = data.get("mg_teacher_action")
+    discipline = data.get("mg_selected_teacher_discipline")
+    if not group_id or action not in {"add", "edit", "delete"} or not discipline:
+        await show_teachers_menu(call.message, edit=True)
+        return
+    await show_teacher_lesson_types(call.message, session, state, int(group_id), str(action), str(discipline), edit=True)
 
 
 @router.callback_query(ManagePageCallback.filter(F.section == "users"))
@@ -270,6 +326,47 @@ async def rename_user_message(message: Message, state: FSMContext, session: Asyn
     await show_user_card(message, session, int(student_id), edit=False)
 
 
+@router.message(ManagementStates.waiting_add_teacher_name)
+async def add_teacher_message(message: Message, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    group_id = data.get("mg_group_id")
+    discipline = data.get("mg_selected_teacher_discipline")
+    lesson_type = data.get("mg_selected_teacher_lesson_type")
+    if not group_id or not discipline or not lesson_type:
+        await message.answer("Сначала выберите группу.")
+        await state.set_state(ManagementStates.viewing_panel)
+        return
+
+    ok, text = await add_group_teacher(session, int(group_id), str(discipline), str(lesson_type), message.text or "")
+    await message.answer(text)
+    if not ok:
+        return
+
+    await state.set_state(ManagementStates.viewing_panel)
+    await show_teachers_list(message, session, state, int(group_id), "edit", str(discipline), str(lesson_type), edit=False)
+
+
+@router.message(ManagementStates.waiting_edit_teacher_name)
+async def edit_teacher_message(message: Message, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    teacher_id = data.get("mg_selected_teacher_id")
+    group_id = data.get("mg_group_id")
+    discipline = data.get("mg_selected_teacher_discipline")
+    lesson_type = data.get("mg_selected_teacher_lesson_type")
+    if not teacher_id or not group_id or not discipline or not lesson_type:
+        await message.answer("Сначала выберите преподавателя.")
+        await state.set_state(ManagementStates.viewing_panel)
+        return
+
+    ok, text = await rename_group_teacher(session, int(teacher_id), message.text or "")
+    await message.answer(text)
+    if not ok:
+        return
+
+    await state.set_state(ManagementStates.viewing_panel)
+    await show_teachers_list(message, session, state, int(group_id), "edit", str(discipline), str(lesson_type), edit=False)
+
+
 @router.callback_query(ManageRoleCallback.filter())
 async def set_user_role(call: CallbackQuery, callback_data: ManageRoleCallback, session: AsyncSession):
     await call.answer()
@@ -278,6 +375,134 @@ async def set_user_role(call: CallbackQuery, callback_data: ManageRoleCallback, 
     await call.message.answer(msg)
     if ok:
         await show_user_card(call.message, session, callback_data.student_id, edit=False)
+
+
+@router.callback_query(ManageTeacherCallback.filter())
+async def teacher_actions(call: CallbackQuery, callback_data: ManageTeacherCallback, state: FSMContext, session: AsyncSession):
+    await call.answer()
+    _, group = await _get_actor_and_group(session, call.from_user.id)
+    if not group:
+        await call.message.answer("Сначала выберите группу.")
+        return
+
+    teacher = await get_group_teacher(session, callback_data.teacher_id)
+    if not teacher or teacher.group_id != group.id:
+        await call.message.answer("Преподаватель не найден.")
+        return
+
+    if callback_data.action == "edit":
+        await state.update_data(
+            mg_selected_teacher_id=teacher.id,
+            mg_selected_teacher_discipline=teacher.discipline,
+            mg_selected_teacher_lesson_type=teacher.lesson_type,
+        )
+        await state.set_state(ManagementStates.waiting_edit_teacher_name)
+        await call.message.answer(
+            f"Дисциплина: {teacher.discipline}\n"
+            f"Вид пары: {teacher_lesson_type_label(teacher.lesson_type)}\n"
+            f"Введите новое ФИО для преподавателя {teacher.full_name}."
+        )
+        return
+
+    if callback_data.action == "delete":
+        ok, text = await delete_group_teacher(session, teacher.id)
+        await call.message.answer(text)
+        if ok:
+            await show_teachers_list(
+                call.message,
+                session,
+                state,
+                group.id,
+                "delete",
+                teacher.discipline,
+                teacher.lesson_type,
+                edit=True,
+            )
+
+
+@router.callback_query(ManageTeacherDisciplineCallback.filter())
+async def teacher_discipline_selected(
+    call: CallbackQuery,
+    callback_data: ManageTeacherDisciplineCallback,
+    state: FSMContext,
+    session: AsyncSession,
+):
+    await call.answer()
+    data = await state.get_data()
+    group_id = data.get("mg_group_id")
+    disciplines = data.get("mg_teacher_disciplines") or []
+    if not group_id or callback_data.option_index < 0 or callback_data.option_index >= len(disciplines):
+        await show_teachers_menu(call.message, edit=True)
+        return
+
+    discipline = disciplines[callback_data.option_index]
+    await show_teacher_lesson_types(
+        call.message,
+        session,
+        state,
+        int(group_id),
+        callback_data.action,
+        str(discipline),
+        edit=True,
+    )
+
+
+@router.callback_query(ManageTeacherLessonTypeCallback.filter())
+async def teacher_lesson_type_selected(
+    call: CallbackQuery,
+    callback_data: ManageTeacherLessonTypeCallback,
+    state: FSMContext,
+    session: AsyncSession,
+):
+    await call.answer()
+    data = await state.get_data()
+    group_id = data.get("mg_group_id")
+    discipline = data.get("mg_selected_teacher_discipline")
+    lesson_types = data.get("mg_teacher_lesson_types") or []
+    if not group_id or not discipline or callback_data.option_index < 0 or callback_data.option_index >= len(lesson_types):
+        await show_teachers_menu(call.message, edit=True)
+        return
+
+    lesson_type = lesson_types[callback_data.option_index]
+    await state.update_data(mg_selected_teacher_lesson_type=lesson_type, mg_teacher_action=callback_data.action)
+    if callback_data.action == "add":
+        await state.set_state(ManagementStates.waiting_add_teacher_name)
+        await call.message.answer(
+            f"Дисциплина: {discipline}\n"
+            f"Вид пары: {teacher_lesson_type_label(str(lesson_type))}\n"
+            "Введите ФИО преподавателя."
+        )
+        return
+
+    await show_teachers_list(
+        call.message,
+        session,
+        state,
+        int(group_id),
+        callback_data.action,
+        str(discipline),
+        str(lesson_type),
+        edit=True,
+    )
+
+
+@router.callback_query(ConfirmCallback.filter(F.action == "mg_parse_teachers"))
+async def parse_teachers_confirm(call: CallbackQuery, callback_data: ConfirmCallback, session: AsyncSession):
+    await call.answer()
+    _, group = await _get_actor_and_group(session, call.from_user.id)
+    if not group:
+        await call.message.answer("Сначала выберите группу.")
+        return
+
+    if callback_data.value == "no":
+        await show_teachers_menu(call.message, edit=True)
+        return
+
+    ok, text = await replace_group_teachers_from_schedule(session, group.id)
+    if ok:
+        await show_teachers_menu(call.message, edit=True, prefix=text)
+        return
+    await _safe_edit_or_answer(call.message, text, management_teachers_menu_kb(), edit=True)
 
 
 @router.callback_query(ConfirmCallback.filter(F.action == "mg_delete_user"))
@@ -572,6 +797,110 @@ async def submission_score_message(message: Message, state: FSMContext, session:
 @router.callback_query(ManageMenuCallback.filter((F.section == "noop") & (F.action == "noop")))
 async def noop(call: CallbackQuery):
     await call.answer()
+
+
+async def show_teachers_menu(message: Message, edit: bool, prefix: str | None = None):
+    text = "Управление преподавателями:"
+    if prefix:
+        text = f"{prefix}\n\n{text}"
+    await _safe_edit_or_answer(message, text, management_teachers_menu_kb(), edit)
+
+
+async def show_teacher_disciplines(
+    message: Message,
+    session: AsyncSession,
+    state: FSMContext,
+    group_id: int,
+    action: str,
+    edit: bool,
+    prefix: str | None = None,
+):
+    disciplines = await list_teacher_disciplines(session, group_id)
+    await state.update_data(
+        mg_teacher_action=action,
+        mg_teacher_disciplines=disciplines,
+        mg_selected_teacher_discipline=None,
+        mg_selected_teacher_lesson_type=None,
+        mg_selected_teacher_id=None,
+    )
+    action_title = {
+        "add": "добавления преподавателя",
+        "edit": "изменения преподавателя",
+        "delete": "удаления преподавателя",
+    }.get(action, "работы с преподавателями")
+    text = f"Выберите дисциплину для {action_title}."
+    if not disciplines:
+        text = "В расписании пока нет дисциплин с видами пар."
+    if prefix:
+        text = f"{prefix}\n\n{text}"
+    await _safe_edit_or_answer(message, text, management_teacher_disciplines_kb(disciplines, action), edit)
+
+
+async def show_teacher_lesson_types(
+    message: Message,
+    session: AsyncSession,
+    state: FSMContext,
+    group_id: int,
+    action: str,
+    discipline: str,
+    edit: bool,
+    prefix: str | None = None,
+):
+    lesson_types = await list_teacher_lesson_types(session, group_id, discipline)
+    await state.update_data(
+        mg_teacher_action=action,
+        mg_selected_teacher_discipline=discipline,
+        mg_teacher_lesson_types=lesson_types,
+        mg_selected_teacher_lesson_type=None,
+        mg_selected_teacher_id=None,
+    )
+    action_title = {
+        "add": "добавления преподавателя",
+        "edit": "изменения преподавателя",
+        "delete": "удаления преподавателя",
+    }.get(action, "работы с преподавателями")
+    text = f"Дисциплина: {discipline}\nВыберите вид пары для {action_title}."
+    if not lesson_types:
+        text = f"Для дисциплины {discipline} пока не найдено видов пары в расписании."
+    if prefix:
+        text = f"{prefix}\n\n{text}"
+    await _safe_edit_or_answer(message, text, management_teacher_lesson_types_kb(lesson_types, action), edit)
+
+
+async def show_teachers_list(
+    message: Message,
+    session: AsyncSession,
+    state: FSMContext,
+    group_id: int,
+    action: str,
+    discipline: str,
+    lesson_type: str,
+    edit: bool,
+    prefix: str | None = None,
+):
+    teachers = await list_group_teachers_for_slot(session, group_id, discipline, lesson_type)
+    await state.update_data(
+        mg_teacher_action=action,
+        mg_selected_teacher_discipline=discipline,
+        mg_selected_teacher_lesson_type=lesson_type,
+    )
+
+    action_title = "изменения" if action == "edit" else "удаления"
+    items = [(teacher.id, teacher.full_name) for teacher in teachers]
+    text = (
+        f"Дисциплина: {discipline}\n"
+        f"Вид пары: {teacher_lesson_type_label(lesson_type)}\n"
+        f"Выберите преподавателя для {action_title}."
+    )
+    if not teachers:
+        text = (
+            f"Дисциплина: {discipline}\n"
+            f"Вид пары: {teacher_lesson_type_label(lesson_type)}\n"
+            "Для этого вида пары преподаватели пока не добавлены."
+        )
+    if prefix:
+        text = f"{prefix}\n\n{text}"
+    await _safe_edit_or_answer(message, text, management_teachers_kb(items, action), edit)
 
 
 async def show_users_list(message: Message, session: AsyncSession, state: FSMContext, group_id: int, page: int, edit: bool):

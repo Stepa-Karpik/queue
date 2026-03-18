@@ -10,9 +10,13 @@ from bot.keyboards.callbacks import (
     ManageSubmissionWorkCallback,
     ManageStudentCallback,
     ManageSubjectCallback,
+    ManageTeacherCallback,
+    ManageTeacherDisciplineCallback,
+    ManageTeacherLessonTypeCallback,
 )
 from bot.models import Role
 from bot.utils.submission_flow import get_submission_work_action
+from bot.utils.teacher_names import teacher_lesson_type_label
 from bot.utils.render import keycap_number
 
 
@@ -21,6 +25,7 @@ def management_main_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="👥 Пользователи", callback_data=ManageMenuCallback(section="main", action="users").pack())],
             [InlineKeyboardButton(text="📚 Дисциплины", callback_data=ManageMenuCallback(section="main", action="subjects").pack())],
+            [InlineKeyboardButton(text="👨‍🏫 Преподаватели", callback_data=ManageMenuCallback(section="main", action="teachers").pack())],
             [InlineKeyboardButton(text="✅ Выйти из режима", callback_data=ManageMenuCallback(section="main", action="exit").pack())],
         ]
     )
@@ -46,6 +51,18 @@ def management_subjects_menu_kb() -> InlineKeyboardMarkup:
     )
 
 
+def management_teachers_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить", callback_data=ManageMenuCallback(section="teachers", action="add").pack())],
+            [InlineKeyboardButton(text="✏️ Изменить", callback_data=ManageMenuCallback(section="teachers", action="edit").pack())],
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data=ManageMenuCallback(section="teachers", action="delete").pack())],
+            [InlineKeyboardButton(text="🔄 Спарсить", callback_data=ManageMenuCallback(section="teachers", action="parse").pack())],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=ManageMenuCallback(section="teachers", action="back").pack())],
+        ]
+    )
+
+
 def management_students_kb(items: list[tuple[int, str]], page: int, total_pages: int) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=name, callback_data=ManageStudentCallback(action="view", student_id=student_id).pack())]
@@ -53,6 +70,43 @@ def management_students_kb(items: list[tuple[int, str]], page: int, total_pages:
     ]
     rows.extend(_pagination("users", page, total_pages))
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=ManageMenuCallback(section="users", action="back").pack())])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def management_teachers_kb(items: list[tuple[int, str]], action: str) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=name, callback_data=ManageTeacherCallback(action=action, teacher_id=teacher_id).pack())]
+        for teacher_id, name in items
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ К видам пары", callback_data=ManageMenuCallback(section="teacher_types", action="back").pack())])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def management_teacher_disciplines_kb(items: list[str], action: str) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=name,
+                callback_data=ManageTeacherDisciplineCallback(action=action, option_index=index).pack(),
+            )
+        ]
+        for index, name in enumerate(items)
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ К преподавателям", callback_data=ManageMenuCallback(section="teachers", action="back").pack())])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def management_teacher_lesson_types_kb(items: list[str], action: str) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=teacher_lesson_type_label(lesson_type),
+                callback_data=ManageTeacherLessonTypeCallback(action=action, option_index=index).pack(),
+            )
+        ]
+        for index, lesson_type in enumerate(items)
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ К дисциплинам", callback_data=ManageMenuCallback(section="teachers", action=action).pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
