@@ -102,6 +102,29 @@ class ManageSubmissionCallback(CallbackData, prefix="mg_submit"):
     value: int
 
 
+class ManageSubmissionActionCallback(CallbackData, prefix="mg_submit_action"):
+    mode: str
+    student_id: int
+
+
+class ManageSubmissionSubjectCallback(CallbackData, prefix="mg_submit_subject"):
+    mode: str
+    student_id: int
+    group_subject_id: int
+
+
+class ManageSubmissionWorkCallback(CallbackData, prefix="mg_submit_work"):
+    mode: str
+    student_id: int
+    group_subject_id: int
+    work_number: int
+
+
+class ManageRemoveWorkCallback(CallbackData, prefix="mg_remove_work"):
+    group_subject_id: int
+    work_number: int
+
+
 class AdminPanelCallback(CallbackData, prefix="ad_panel"):
     action: str
     value: str

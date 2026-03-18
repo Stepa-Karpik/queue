@@ -3,12 +3,16 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from bot.keyboards.callbacks import (
     ManageMenuCallback,
     ManagePageCallback,
+    ManageRemoveWorkCallback,
     ManageRoleCallback,
+    ManageSubmissionActionCallback,
+    ManageSubmissionSubjectCallback,
+    ManageSubmissionWorkCallback,
     ManageStudentCallback,
     ManageSubjectCallback,
-    ManageSubmissionCallback,
 )
 from bot.models import Role
+from bot.utils.submission_flow import get_submission_work_action
 from bot.utils.render import keycap_number
 
 
@@ -76,6 +80,16 @@ def management_user_card_kb(student_id: int, is_inactive: bool) -> InlineKeyboar
     )
 
 
+def management_submission_actions_kb(student_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Отметить сдачу", callback_data=ManageSubmissionActionCallback(mode="add", student_id=student_id).pack())],
+            [InlineKeyboardButton(text="❌ Отменить сдачу", callback_data=ManageSubmissionActionCallback(mode="delete", student_id=student_id).pack())],
+            [InlineKeyboardButton(text="⬅️ К пользователю", callback_data=ManageStudentCallback(action="view", student_id=student_id).pack())],
+        ]
+    )
+
+
 def management_role_kb(student_id: int, current_role: str | None) -> InlineKeyboardMarkup:
     student_label = "✅ Студент" if current_role == Role.STUDENT.value else "Студент"
     starosta_label = "✅ Староста" if current_role == Role.STAROSTA.value else "Староста"
@@ -120,7 +134,7 @@ def management_remove_works_kb(numbers: list[int], group_subject_id: int) -> Inl
         row.append(
             InlineKeyboardButton(
                 text=keycap_number(number),
-                callback_data=ManageSubmissionCallback(action=f"remove_work:{group_subject_id}", value=number).pack(),
+                callback_data=ManageRemoveWorkCallback(group_subject_id=group_subject_id, work_number=number).pack(),
             )
         )
         if idx % 5 == 0:
@@ -134,10 +148,10 @@ def management_remove_works_kb(numbers: list[int], group_subject_id: int) -> Inl
 
 def management_submission_subjects_kb(items: list[tuple[int, str]], student_id: int) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=name, callback_data=ManageSubjectCallback(action=f"submissions:{student_id}", group_subject_id=group_subject_id).pack())]
+        [InlineKeyboardButton(text=name, callback_data=ManageSubmissionSubjectCallback(mode="select", student_id=student_id, group_subject_id=group_subject_id).pack())]
         for group_subject_id, name in items
     ]
-    rows.append([InlineKeyboardButton(text="⬅️ К пользователю", callback_data=ManageStudentCallback(action="view", student_id=student_id).pack())])
+    rows.append([InlineKeyboardButton(text="⬅️ К действиям", callback_data=ManageStudentCallback(action="submissions", student_id=student_id).pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -146,19 +160,27 @@ def management_submission_works_kb(
     student_id: int,
     numbers: list[int],
     submitted_numbers: list[int] | set[int],
+    mode: str,
 ) -> InlineKeyboardMarkup:
     submitted_set = set(submitted_numbers)
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for idx, number in enumerate(numbers, start=1):
         is_submitted = number in submitted_set
+        action = get_submission_work_action(mode, is_submitted=is_submitted)
         row.append(
             InlineKeyboardButton(
-                text="🟥" if is_submitted else keycap_number(number),
-                callback_data=ManageSubmissionCallback(
-                    action=f"{'delete' if is_submitted else 'add'}:{group_subject_id}:{student_id}",
-                    value=number,
-                ).pack(),
+                text=("🟥" if mode == "delete" else "🟩") if is_submitted else keycap_number(number),
+                callback_data=(
+                    ManageSubmissionWorkCallback(
+                        mode=action,
+                        student_id=student_id,
+                        group_subject_id=group_subject_id,
+                        work_number=number,
+                    ).pack()
+                    if action != "noop"
+                    else ManageMenuCallback(section="noop", action="noop").pack()
+                ),
             )
         )
         if idx % 5 == 0:
@@ -166,7 +188,7 @@ def management_submission_works_kb(
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="⬅️ К дисциплинам", callback_data=ManageStudentCallback(action="submissions", student_id=student_id).pack())])
+    rows.append([InlineKeyboardButton(text="⬅️ К дисциплинам", callback_data=ManageStudentCallback(action="submission_subjects", student_id=student_id).pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

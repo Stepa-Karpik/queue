@@ -16,6 +16,7 @@ from bot.services.priority import get_priority_list
 from bot.services.schedule import get_upcoming_bound_entries, mark_notification_sent, was_notification_sent
 from bot.services.users import list_group_registered_users
 from bot.utils.db import AsyncSessionLocal, Base, engine
+from bot.utils.notification_filters import get_students_with_pending_works
 from bot.utils.config import settings
 
 MSK = ZoneInfo("Europe/Moscow")
@@ -108,14 +109,19 @@ async def notification_loop(bot: Bot) -> None:
                     priority_items = await get_priority_list(session, binding.group_subject_id)
                     if not priority_items:
                         continue
+                    pending_student_ids = get_students_with_pending_works(priority_items)
+                    if not pending_student_ids:
+                        continue
 
                     text_message = build_priority_notification_text(
                         binding.group_subject.subject.name,
                         entry.pair_start_at,
-                        priority_items,
+                        [item for item in priority_items if item["student_id"] in pending_student_ids],
                     )
                     users = await list_group_registered_users(session, entry.group_id)
                     for user in users:
+                        if not user.student_id or user.student_id not in pending_student_ids:
+                            continue
                         try:
                             await bot.send_message(user.tg_id, text_message)
                         except Exception:

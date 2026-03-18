@@ -7,10 +7,13 @@ from bot.keyboards.callbacks import (
     ConfirmCallback,
     ManageMenuCallback,
     ManagePageCallback,
+    ManageRemoveWorkCallback,
     ManageRoleCallback,
+    ManageSubmissionActionCallback,
+    ManageSubmissionSubjectCallback,
+    ManageSubmissionWorkCallback,
     ManageStudentCallback,
     ManageSubjectCallback,
-    ManageSubmissionCallback,
 )
 from bot.keyboards.common import STAROSTA_ALIASES, main_menu_kb
 from bot.keyboards.management import (
@@ -18,6 +21,7 @@ from bot.keyboards.management import (
     management_remove_works_kb,
     management_role_kb,
     management_score_kb,
+    management_submission_actions_kb,
     management_students_kb,
     management_subject_card_kb,
     management_subject_kind_kb,
@@ -50,6 +54,11 @@ from bot.services.users import get_effective_group, get_user_by_tg, is_admin_mod
 from bot.states.management import ManagementStates
 from bot.utils.admin_state import cancel_admin_broadcast_flow
 from bot.utils.names import format_full_name, format_short_name, normalize_group_name, split_full_name
+from bot.utils.submission_flow import (
+    get_submission_mode_from_action,
+    get_submission_subject_prompt,
+    get_submission_work_prompt,
+)
 
 router = Router()
 PAGE_SIZE = 8
@@ -201,7 +210,40 @@ async def user_actions(call: CallbackQuery, callback_data: ManageStudentCallback
         )
         return
     if callback_data.action == "submissions":
-        await show_submission_subjects(call.message, session, student.id, edit=True)
+        await state.update_data(mg_selected_student_id=student.id, mg_submission_mode=None)
+        await show_submission_actions(call.message, session, student.id, edit=True)
+        return
+
+    submission_mode = get_submission_mode_from_action(callback_data.action)
+    if submission_mode:
+        await state.update_data(mg_selected_student_id=student.id, mg_submission_mode=submission_mode)
+        await show_submission_subjects(call.message, session, state, student.id, edit=True)
+        return
+
+    if callback_data.action == "submission_subjects":
+        data = await state.get_data()
+        if data.get("mg_submission_mode") not in {"add", "delete"}:
+            await show_submission_actions(call.message, session, student.id, edit=True)
+            return
+        await show_submission_subjects(call.message, session, state, student.id, edit=True)
+        return
+
+
+@router.callback_query(ManageSubmissionActionCallback.filter())
+async def submission_action_menu(call: CallbackQuery, callback_data: ManageSubmissionActionCallback, state: FSMContext, session: AsyncSession):
+    await call.answer()
+    student = await get_student_with_user(session, callback_data.student_id)
+    if not student:
+        await call.message.answer("Пользователь не найден.")
+        return
+
+    submission_mode = callback_data.mode if callback_data.mode in {"add", "delete"} else None
+    if not submission_mode:
+        await call.message.answer("Не удалось определить режим управления сдачей.")
+        return
+
+    await state.update_data(mg_selected_student_id=student.id, mg_submission_mode=submission_mode)
+    await show_submission_subjects(call.message, session, state, student.id, edit=True)
 
 
 @router.message(ManagementStates.waiting_edit_user_full_name)
@@ -381,10 +423,6 @@ async def subject_actions(call: CallbackQuery, callback_data: ManageSubjectCallb
             reply_markup=InlineDeleteConfirm.subject(callback_data.group_subject_id),
         )
         return
-    if action.startswith("submissions:"):
-        student_id = int(action.split(":", maxsplit=1)[1])
-        await state.update_data(mg_selected_student_id=student_id, mg_selected_subject_id=callback_data.group_subject_id)
-        await show_submission_works(call.message, session, state, student_id, callback_data.group_subject_id, edit=True)
 
 
 @router.message(ManagementStates.waiting_rename_subject)
@@ -430,40 +468,57 @@ async def subject_card_back(call: CallbackQuery, state: FSMContext, session: Asy
         await show_subjects_list(call.message, session, state, int(group_id), page=page, edit=True)
 
 
-@router.callback_query(ManageSubmissionCallback.filter())
-async def submission_actions(call: CallbackQuery, callback_data: ManageSubmissionCallback, state: FSMContext, session: AsyncSession):
+@router.callback_query(ManageSubmissionSubjectCallback.filter())
+async def submission_subject_selected(call: CallbackQuery, callback_data: ManageSubmissionSubjectCallback, state: FSMContext, session: AsyncSession):
     await call.answer()
-    action_parts = callback_data.action.split(":")
-    action_name = action_parts[0]
-
-    if action_name == "remove_work":
-        group_subject_id = int(action_parts[1])
-        ok = await deactivate_work_number(session, group_subject_id, callback_data.value)
-        await call.message.answer("Работа удалена." if ok else "Не удалось удалить работу.")
-        await show_subject_card(call.message, session, group_subject_id, edit=False)
+    if callback_data.mode != "select":
+        await call.message.answer("Не удалось определить дисциплину для сдачи.")
         return
+    await state.update_data(
+        mg_selected_student_id=callback_data.student_id,
+        mg_selected_subject_id=callback_data.group_subject_id,
+    )
+    await show_submission_works(
+        call.message,
+        session,
+        state,
+        callback_data.student_id,
+        callback_data.group_subject_id,
+        edit=True,
+    )
 
-    if action_name == "delete":
-        group_subject_id = int(action_parts[1])
-        student_id = int(action_parts[2])
-        ok = await delete_submission(session, student_id, group_subject_id, callback_data.value)
+
+@router.callback_query(ManageSubmissionWorkCallback.filter())
+async def submission_work_actions(call: CallbackQuery, callback_data: ManageSubmissionWorkCallback, state: FSMContext, session: AsyncSession):
+    await call.answer()
+    if callback_data.mode == "delete":
+        ok = await delete_submission(session, callback_data.student_id, callback_data.group_subject_id, callback_data.work_number)
         await call.message.answer("Сдача удалена." if ok else "Сдача не найдена.")
-        await show_submission_works(call.message, session, state, student_id, group_subject_id, edit=False)
+        await show_submission_works(call.message, session, state, callback_data.student_id, callback_data.group_subject_id, edit=False)
         return
 
-    if action_name == "add":
-        group_subject_id = int(action_parts[1])
-        student_id = int(action_parts[2])
+    if callback_data.mode == "add":
         await state.update_data(
-            mg_submission_student_id=student_id,
-            mg_submission_group_subject_id=group_subject_id,
-            mg_submission_work_number=callback_data.value,
+            mg_submission_student_id=callback_data.student_id,
+            mg_submission_group_subject_id=callback_data.group_subject_id,
+            mg_submission_work_number=callback_data.work_number,
         )
         await state.set_state(ManagementStates.waiting_submission_score)
         await call.message.answer(
-            f"Работа №{callback_data.value}. Введите балл от 0 до 100 или нажмите «Без балла».",
+            f"Работа №{callback_data.work_number}. Введите балл от 0 до 100 или нажмите «Без балла».",
             reply_markup=management_score_kb(),
         )
+        return
+
+    await call.message.answer("Не удалось определить действие с работой.")
+
+
+@router.callback_query(ManageRemoveWorkCallback.filter())
+async def remove_work_action(call: CallbackQuery, callback_data: ManageRemoveWorkCallback, session: AsyncSession):
+    await call.answer()
+    ok = await deactivate_work_number(session, callback_data.group_subject_id, callback_data.work_number)
+    await call.message.answer("Работа удалена." if ok else "Не удалось удалить работу.")
+    await show_subject_card(call.message, session, callback_data.group_subject_id, edit=False)
 
 
 @router.callback_query(ManageMenuCallback.filter(F.section == "submission_score"))
@@ -554,6 +609,19 @@ async def show_user_card(message: Message, session: AsyncSession, student_id: in
     await _safe_edit_or_answer(message, text, management_user_card_kb(student_id, student.is_inactive), edit)
 
 
+async def show_submission_actions(message: Message, session: AsyncSession, student_id: int, edit: bool):
+    student = await get_student_with_user(session, student_id)
+    if not student:
+        await message.answer("Пользователь не найден.")
+        return
+
+    text = (
+        f"Сдачи студента {format_full_name(student.last_name, student.first_name, student.middle_name)}.\n"
+        "Выберите действие:"
+    )
+    await _safe_edit_or_answer(message, text, management_submission_actions_kb(student_id), edit)
+
+
 async def show_subjects_list(message: Message, session: AsyncSession, state: FSMContext, group_id: int, page: int, edit: bool):
     subjects = await list_group_subjects_all(session, group_id)
     total_pages = max(1, (len(subjects) + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -585,14 +653,19 @@ async def show_subject_card(message: Message, session: AsyncSession, group_subje
     await _safe_edit_or_answer(message, text, management_subject_card_kb(group_subject_id), edit)
 
 
-async def show_submission_subjects(message: Message, session: AsyncSession, student_id: int, edit: bool):
+async def show_submission_subjects(message: Message, session: AsyncSession, state: FSMContext, student_id: int, edit: bool):
     student = await get_student_with_user(session, student_id)
     if not student:
         await message.answer("Пользователь не найден.")
         return
+    data = await state.get_data()
+    mode = data.get("mg_submission_mode")
+    if mode not in {"add", "delete"}:
+        await show_submission_actions(message, session, student_id, edit)
+        return
     subjects = await list_group_subjects_all(session, student.group_id)
     items = [(item.id, item.subject.name) for item in subjects]
-    text = "Выберите дисциплину для управления сдачами:"
+    text = get_submission_subject_prompt(mode)
     await _safe_edit_or_answer(message, text, management_submission_subjects_kb(items, student_id), edit)
 
 
@@ -606,15 +679,17 @@ async def show_submission_works(
 ):
     numbers = await list_active_work_numbers(session, group_subject_id)
     submitted_numbers = await list_submitted_numbers(session, student_id, group_subject_id)
-    text = (
-        "Красная кнопка — сдача уже есть, нажатие удаляет ее.\n"
-        "Цифра — сдачи нет, нажатие добавляет ее."
-    )
+    data = await state.get_data()
+    mode = data.get("mg_submission_mode")
+    if mode not in {"add", "delete"}:
+        await show_submission_actions(message, session, student_id, edit)
+        return
+    text = get_submission_work_prompt(mode)
     await state.update_data(mg_selected_student_id=student_id, mg_selected_subject_id=group_subject_id)
     await _safe_edit_or_answer(
         message,
         text,
-        management_submission_works_kb(group_subject_id, student_id, numbers, submitted_numbers),
+        management_submission_works_kb(group_subject_id, student_id, numbers, submitted_numbers, mode),
         edit,
     )
 
