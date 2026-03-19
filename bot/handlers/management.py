@@ -715,13 +715,13 @@ async def submission_subject_selected(call: CallbackQuery, callback_data: Manage
 
 @router.callback_query(ManageSubmissionWorkCallback.filter())
 async def submission_work_actions(call: CallbackQuery, callback_data: ManageSubmissionWorkCallback, state: FSMContext, session: AsyncSession):
-    await call.answer()
     if callback_data.mode == "delete":
         ok = await delete_submission(session, callback_data.student_id, callback_data.group_subject_id, callback_data.work_number)
-        await call.message.answer("Сдача удалена." if ok else "Сдача не найдена.")
-        await show_submission_works(call.message, session, state, callback_data.student_id, callback_data.group_subject_id, edit=False)
+        await call.answer("Сдача удалена." if ok else "Сдача не найдена.")
+        await show_submission_works(call.message, session, state, callback_data.student_id, callback_data.group_subject_id, edit=True)
         return
 
+    await call.answer()
     if callback_data.mode == "add":
         await state.update_data(
             mg_submission_student_id=callback_data.student_id,

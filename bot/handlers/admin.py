@@ -5,6 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards.admin import (
     admin_broadcast_kb,
+    admin_group_delete_kb,
+    admin_group_edit_kb,
+    admin_group_settings_kb,
     admin_groups_kb,
     admin_user_card_kb,
     admin_user_groups_kb,
@@ -24,27 +27,42 @@ from bot.keyboards.common import (
     confirm_kb,
     main_menu_kb,
 )
+from bot.keyboards.management import (
+    management_subjects_menu_kb,
+    management_teachers_menu_kb,
+    management_users_menu_kb,
+)
 from bot.models import Role
 from bot.services.admin_panel import (
     delete_student_with_related,
+    list_group_students_with_user,
     reassign_student_group,
     set_role_for_student_user,
     update_student_full_name,
 )
-from bot.services.groups import list_groups
+from bot.services.groups import (
+    create_group_with_faculty,
+    delete_group_with_related,
+    get_group,
+    list_groups,
+    update_group_faculty,
+    update_group_name,
+)
 from bot.services.users import (
     get_user_by_id,
     get_user_by_tg,
     is_admin_mode,
     is_admin_user,
     is_starosta_user,
+    list_group_registered_users,
     list_registered_users,
     set_admin_group,
     set_admin_mode,
 )
 from bot.states.admin_panel import AdminPanelStates
+from bot.states.management import ManagementStates
 from bot.utils.admin_state import cancel_admin_broadcast_flow
-from bot.utils.names import format_full_name, format_short_name, normalize_group_name, split_full_name
+from bot.utils.names import format_full_name, format_short_name, normalize_faculty_name, normalize_group_name, split_full_name
 
 router = Router()
 PAGE_SIZE = 10
@@ -129,7 +147,7 @@ async def admin_groups(message: Message, state: FSMContext, session: AsyncSessio
     if not user:
         await message.answer("Сначала включите режим администратора.")
         return
-    await show_groups(message, session, page=1, edit=False)
+    await show_groups(message, session, state, page=1, edit=False)
 
 
 @router.message(F.text.in_(ADMIN_USERS_ALIASES))
@@ -181,26 +199,108 @@ async def admin_callbacks(call: CallbackQuery, callback_data: AdminPanelCallback
         await _safe_edit_or_answer(call.message, _admin_mode_text(user), None, edit=True)
         return
     if action == "groups_page":
-        await show_groups(call.message, session, page=int(callback_data.value), edit=True)
+        await show_groups(call.message, session, state, page=int(callback_data.value), edit=True)
+        return
+    if action == "group_list":
+        page = int((await state.get_data()).get("admin_groups_page", 1))
+        await show_groups(call.message, session, state, page=page, edit=True)
         return
     if action == "users_page":
         await show_registered_users(call.message, session, state, page=int(callback_data.value), edit=True)
         return
-    if action == "select_group":
-        groups = await list_groups(session)
-        group = next((item for item in groups if item.id == int(callback_data.value)), None)
+    if action == "group_view":
+        await state.update_data(admin_selected_group_id=int(callback_data.value))
+        await show_group_card(call.message, session, int(callback_data.value), edit=True)
+        return
+    if action in {"select_group", "group_select"}:
+        group = await get_group(session, int(callback_data.value))
         if not group:
             await call.message.answer("Группа не найдена.")
             return
         user = await set_admin_group(session, user, group.id)
-        await _safe_edit_or_answer(
+        await state.update_data(admin_selected_group_id=group.id)
+        await show_group_card(
             call.message,
-            (
-                f"Выбрана группа {normalize_group_name(group.name)}.\n"
-                "Теперь можно открывать «Староста», «Расписание» и «Список группы» для этой группы."
-            ),
-            None,
+            session,
+            group.id,
             edit=True,
+            flash_text="Группа выбрана. Теперь можно работать от ее лица.",
+        )
+        return
+    if action == "group_edit":
+        await state.update_data(admin_selected_group_id=int(callback_data.value))
+        await show_group_edit_menu(call.message, session, int(callback_data.value), edit=True)
+        return
+    if action == "group_add":
+        await state.set_state(AdminPanelStates.waiting_group_create)
+        await call.message.answer("Введите группу и факультет в формате: ВИ23;ИиВТ")
+        return
+    if action == "group_rename":
+        await state.update_data(admin_selected_group_id=int(callback_data.value))
+        await state.set_state(AdminPanelStates.waiting_group_name)
+        await call.message.answer("Введите новое название группы.")
+        return
+    if action == "group_change_faculty":
+        await state.update_data(admin_selected_group_id=int(callback_data.value))
+        await state.set_state(AdminPanelStates.waiting_group_faculty)
+        await call.message.answer("Введите новый факультет группы.")
+        return
+    if action == "group_delete":
+        await state.update_data(admin_selected_group_id=int(callback_data.value))
+        await show_group_delete_menu(call.message, session, int(callback_data.value), edit=True)
+        return
+    if action in {"group_delete_notify", "group_delete_silent"}:
+        page = int((await state.get_data()).get("admin_groups_page", 1))
+        ok, result_text, notify_tg_ids = await delete_group_with_related(session, int(callback_data.value))
+        if not ok:
+            await call.message.answer(result_text)
+            return
+        if action == "group_delete_notify":
+            for tg_id in notify_tg_ids:
+                try:
+                    await call.message.bot.send_message(
+                        tg_id,
+                        f"Ваша группа {result_text} была аннулирована администратором.",
+                    )
+                except Exception:
+                    pass
+            await call.message.answer(f"Группа {result_text} удалена. Пользователи оповещены.")
+        else:
+            await call.message.answer(f"Группа {result_text} удалена.")
+        await state.update_data(admin_selected_group_id=None)
+        await show_groups(call.message, session, state, page=page, edit=True)
+        return
+    if action == "group_edit_users":
+        await _open_group_management_menu(
+            call.message,
+            state,
+            session,
+            user,
+            int(callback_data.value),
+            "Пользователи группы:",
+            management_users_menu_kb(),
+        )
+        return
+    if action == "group_edit_subjects":
+        await _open_group_management_menu(
+            call.message,
+            state,
+            session,
+            user,
+            int(callback_data.value),
+            "Дисциплины группы:",
+            management_subjects_menu_kb(),
+        )
+        return
+    if action == "group_edit_teachers":
+        await _open_group_management_menu(
+            call.message,
+            state,
+            session,
+            user,
+            int(callback_data.value),
+            "Преподаватели группы:",
+            management_teachers_menu_kb(),
         )
         return
     if action == "user_view":
@@ -375,6 +475,78 @@ async def rename_user_message(message: Message, state: FSMContext, session: Asyn
     await show_registered_user_card(message, session, target.id, edit=False)
 
 
+@router.message(AdminPanelStates.waiting_group_create)
+async def create_group_message(message: Message, state: FSMContext, session: AsyncSession):
+    user = await _require_admin(session, message.from_user.id)
+    if not user:
+        await message.answer("Сначала включите режим администратора.")
+        await state.clear()
+        return
+
+    group_name, faculty_name = _split_group_and_faculty(message.text or "")
+    if not group_name or not faculty_name:
+        await message.answer("Неверный формат. Используйте: ВИ23;ИиВТ")
+        return
+
+    ok, text, group = await create_group_with_faculty(session, group_name, faculty_name)
+    if not ok or not group:
+        await message.answer(text)
+        return
+
+    await state.set_state(None)
+    await state.update_data(admin_selected_group_id=group.id)
+    await message.answer(text)
+    await show_group_card(message, session, group.id, edit=False)
+
+
+@router.message(AdminPanelStates.waiting_group_name)
+async def rename_group_message(message: Message, state: FSMContext, session: AsyncSession):
+    user = await _require_admin(session, message.from_user.id)
+    if not user:
+        await message.answer("Сначала включите режим администратора.")
+        await state.clear()
+        return
+
+    group_id = (await state.get_data()).get("admin_selected_group_id")
+    if not group_id:
+        await message.answer("Сначала выберите группу.")
+        await state.clear()
+        return
+
+    ok, text, group = await update_group_name(session, int(group_id), message.text or "")
+    if not ok or not group:
+        await message.answer(text)
+        return
+
+    await state.set_state(None)
+    await message.answer(text)
+    await show_group_card(message, session, group.id, edit=False)
+
+
+@router.message(AdminPanelStates.waiting_group_faculty)
+async def change_group_faculty_message(message: Message, state: FSMContext, session: AsyncSession):
+    user = await _require_admin(session, message.from_user.id)
+    if not user:
+        await message.answer("Сначала включите режим администратора.")
+        await state.clear()
+        return
+
+    group_id = (await state.get_data()).get("admin_selected_group_id")
+    if not group_id:
+        await message.answer("Сначала выберите группу.")
+        await state.clear()
+        return
+
+    ok, text, group = await update_group_faculty(session, int(group_id), message.text or "")
+    if not ok or not group:
+        await message.answer(text)
+        return
+
+    await state.set_state(None)
+    await message.answer(text)
+    await show_group_card(message, session, group.id, edit=False)
+
+
 @router.message(
     AdminPanelStates.waiting_broadcast_text,
     ~F.text.in_(
@@ -411,15 +583,75 @@ async def broadcast_message(message: Message, state: FSMContext, session: AsyncS
     await message.answer(f"Рассылка завершена. Успешно: {success}. Ошибок: {failed}.")
 
 
-async def show_groups(message: Message, session: AsyncSession, page: int, edit: bool):
+async def show_groups(message: Message, session: AsyncSession, state: FSMContext, page: int, edit: bool):
     groups = await list_groups(session)
     total_pages = max(1, (len(groups) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = max(1, min(page, total_pages))
     start = (page - 1) * PAGE_SIZE
     end = start + PAGE_SIZE
-    items = [(group.id, f"{normalize_group_name(group.name)} • {group.faculty.name}") for group in groups[start:end]]
+    await state.update_data(admin_groups_page=page)
+    items = [(group.id, f"{normalize_group_name(group.name)} • {normalize_faculty_name(group.faculty.name)}") for group in groups[start:end]]
     text = f"Выберите группу\nСтраница {page}/{total_pages}"
     await _safe_edit_or_answer(message, text, admin_groups_kb(items, page, total_pages), edit)
+
+
+async def show_group_card(
+    message: Message,
+    session: AsyncSession,
+    group_id: int,
+    edit: bool,
+    flash_text: str | None = None,
+):
+    group = await get_group(session, group_id)
+    if not group:
+        await message.answer("Группа не найдена.")
+        return
+
+    students = await list_group_students_with_user(session, group_id)
+    registered_users = await list_group_registered_users(session, group_id, include_inactive=True)
+    lines = []
+    if flash_text:
+        lines.append(flash_text)
+        lines.append("")
+    lines.extend(
+        [
+            "Группа:",
+            f"• Название: {normalize_group_name(group.name)}",
+            f"• Факультет: {normalize_faculty_name(group.faculty.name)}",
+            f"• Студентов в базе: {len(students)}",
+            f"• Telegram-пользователей: {len(registered_users)}",
+        ]
+    )
+    await _safe_edit_or_answer(
+        message,
+        "\n".join(lines),
+        admin_group_settings_kb(group.id),
+        edit,
+    )
+
+
+async def show_group_edit_menu(message: Message, session: AsyncSession, group_id: int, edit: bool):
+    group = await get_group(session, group_id)
+    if not group:
+        await message.answer("Группа не найдена.")
+        return
+    text = (
+        f"Изменение группы {normalize_group_name(group.name)}.\n"
+        "Выберите, что хотите настроить:"
+    )
+    await _safe_edit_or_answer(message, text, admin_group_edit_kb(group.id), edit)
+
+
+async def show_group_delete_menu(message: Message, session: AsyncSession, group_id: int, edit: bool):
+    group = await get_group(session, group_id)
+    if not group:
+        await message.answer("Группа не найдена.")
+        return
+    text = (
+        f"Удалить группу {normalize_group_name(group.name)}?\n"
+        "Будут удалены группа и все связанные пользователи."
+    )
+    await _safe_edit_or_answer(message, text, admin_group_delete_kb(group.id), edit)
 
 
 async def show_registered_users(message: Message, session: AsyncSession, state: FSMContext, page: int, edit: bool):
@@ -450,7 +682,7 @@ async def show_registered_user_card(
     username = f"@{target.username}" if target.username else "без username"
     group_name = normalize_group_name(target.student.group.name) if target.student and target.student.group else "—"
     faculty_name = (
-        target.student.group.faculty.name
+        normalize_faculty_name(target.student.group.faculty.name)
         if target.student and target.student.group and target.student.group.faculty
         else "—"
     )
@@ -484,9 +716,46 @@ async def show_admin_user_groups(message: Message, session: AsyncSession, user_i
     page = max(1, min(page, total_pages))
     start = (page - 1) * PAGE_SIZE
     end = start + PAGE_SIZE
-    items = [(group.id, f"{normalize_group_name(group.name)} • {group.faculty.name}") for group in groups[start:end]]
+    items = [(group.id, f"{normalize_group_name(group.name)} • {normalize_faculty_name(group.faculty.name)}") for group in groups[start:end]]
     text = f"Выберите группу для пользователя\nСтраница {page}/{total_pages}"
     await _safe_edit_or_answer(message, text, admin_user_groups_kb(items, user_id, page, total_pages), edit)
+
+
+async def _open_group_management_menu(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    user,
+    group_id: int,
+    title: str,
+    reply_markup,
+):
+    group = await get_group(session, group_id)
+    if not group:
+        await message.answer("Группа не найдена.")
+        return
+
+    await set_admin_group(session, user, group_id)
+    await state.update_data(
+        admin_selected_group_id=group_id,
+        mg_group_id=group_id,
+        mg_users_page=1,
+        mg_subjects_page=1,
+    )
+    await state.set_state(ManagementStates.viewing_panel)
+    await _safe_edit_or_answer(
+        message,
+        f"{title}\nГруппа: {normalize_group_name(group.name)}",
+        reply_markup,
+        edit=True,
+    )
+
+
+def _split_group_and_faculty(value: str) -> tuple[str, str]:
+    if ";" not in value:
+        return "", ""
+    group_name, faculty_name = value.split(";", maxsplit=1)
+    return group_name.strip(), faculty_name.strip()
 
 
 def _user_list_label(user) -> str:

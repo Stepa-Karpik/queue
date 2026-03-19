@@ -2,15 +2,21 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.models import Faculty, Group, Student
-from bot.utils.names import normalize_group_name
+from bot.utils.names import normalize_faculty_name, normalize_group_name
 
 
 async def get_or_create_faculty(session: AsyncSession, name: str) -> Faculty:
-    result = await session.execute(select(Faculty).where(Faculty.name == name))
-    faculty = result.scalar_one_or_none()
+    normalized_name = normalize_faculty_name(name)
+    result = await session.execute(select(Faculty))
+    faculties = list(result.scalars().all())
+    faculty = next((item for item in faculties if normalize_faculty_name(item.name) == normalized_name), None)
     if faculty:
+        if faculty.name != normalized_name:
+            faculty.name = normalized_name
+            await session.commit()
+            await session.refresh(faculty)
         return faculty
-    faculty = Faculty(name=name)
+    faculty = Faculty(name=normalized_name)
     session.add(faculty)
     await session.commit()
     await session.refresh(faculty)

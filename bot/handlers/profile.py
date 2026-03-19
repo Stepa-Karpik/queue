@@ -26,7 +26,15 @@ from bot.services.students import get_student_group
 from bot.services.users import delete_user_by_tg, get_user_by_tg, is_admin_mode, is_admin_user
 from bot.states.profile_settings import ProfileSettingsStates
 from bot.states.registration import RegistrationStates
-from bot.utils.names import format_full_name, normalize_group_name, normalize_name, split_full_name
+from bot.utils.names import (
+    format_full_name,
+    get_group_validation_error_text,
+    normalize_faculty_name,
+    normalize_group_name,
+    normalize_name,
+    normalize_valid_group_name,
+    split_full_name,
+)
 from bot.utils.user_settings import (
     NotificationMode,
     get_notification_mode_description,
@@ -39,7 +47,7 @@ router = Router()
 def _build_profile_text(user, fallback_full_name: str) -> str:
     role = "Староста" if user.role == Role.STAROSTA.value else "Студент"
     own_group = user.student.group if user.student else None
-    faculty = own_group.faculty.name if own_group and own_group.faculty else "—"
+    faculty = normalize_faculty_name(own_group.faculty.name) if own_group and own_group.faculty else "—"
     group_name = normalize_group_name(own_group.name) if own_group else "—"
     full_name = (
         format_full_name(user.student.last_name, user.student.first_name, user.student.middle_name)
@@ -65,7 +73,7 @@ def _build_profile_text(user, fallback_full_name: str) -> str:
 
 def _build_settings_text(user) -> str:
     own_group = user.student.group if user.student else None
-    faculty = own_group.faculty.name if own_group and own_group.faculty else "—"
+    faculty = normalize_faculty_name(own_group.faculty.name) if own_group and own_group.faculty else "—"
     group_name = normalize_group_name(own_group.name) if own_group else "—"
     full_name = (
         format_full_name(user.student.last_name, user.student.first_name, user.student.middle_name)
@@ -343,9 +351,9 @@ async def profile_group_message(message: Message, state: FSMContext, session: As
     if not current_group or not current_group.faculty:
         await message.answer("Не удалось определить текущий факультет.")
         return
-    new_group_name = normalize_group_name(message.text or "")
+    new_group_name = normalize_valid_group_name(message.text or "")
     if not new_group_name:
-        await message.answer("Введите непустое название группы.")
+        await message.answer(get_group_validation_error_text())
         return
     new_group = await get_or_create_group(session, new_group_name, current_group.faculty_id)
     await reassign_student_group(session, user.student_id, new_group.id)
@@ -356,7 +364,7 @@ async def profile_group_message(message: Message, state: FSMContext, session: As
 
 @router.message(ProfileSettingsStates.waiting_faculty)
 async def profile_faculty_message(message: Message, state: FSMContext):
-    faculty_name = normalize_name(message.text or "")
+    faculty_name = normalize_faculty_name(message.text or "")
     if not faculty_name:
         await message.answer("Введите непустое название факультета.")
         return
@@ -385,9 +393,9 @@ async def profile_group_after_faculty_message(message: Message, state: FSMContex
         await message.answer("Не удалось определить факультет. Начните снова из настроек.")
         await state.set_state(None)
         return
-    group_name = normalize_group_name(message.text or "")
+    group_name = normalize_valid_group_name(message.text or "")
     if not group_name:
-        await message.answer("Введите непустое название группы.")
+        await message.answer(get_group_validation_error_text())
         return
     faculty = await get_or_create_faculty(session, faculty_name)
     group = await get_or_create_group(session, group_name, faculty.id)

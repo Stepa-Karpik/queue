@@ -2,7 +2,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from bot.models import GroupSubject, Role, ScheduleTemplate, Student, Subject, SubjectKind, Submission, User
+from bot.models import GroupSubject, Role, ScheduleTemplate, Student, Subject, SubjectKind, Submission, User, UserNotificationSubject
 from bot.utils.names import normalize_name
 
 
@@ -169,6 +169,7 @@ async def delete_student_with_related(session: AsyncSession, student_id: int) ->
 
     await session.execute(delete(Submission).where(Submission.student_id == student_id))
     if student.user:
+        await session.execute(delete(UserNotificationSubject).where(UserNotificationSubject.user_id == student.user.id))
         await session.execute(
             update(ScheduleTemplate)
             .where(ScheduleTemplate.uploaded_by_user_id == student.user.id)

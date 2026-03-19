@@ -6,10 +6,11 @@ from bot.models import Role
 
 def admin_groups_kb(items: list[tuple[int, str]], page: int, total_pages: int) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=label, callback_data=AdminPanelCallback(action="select_group", value=str(group_id)).pack())]
+        [InlineKeyboardButton(text=label, callback_data=AdminPanelCallback(action="group_view", value=str(group_id)).pack())]
         for group_id, label in items
     ]
     rows.extend(_pagination("groups_page", page, total_pages))
+    rows.append([InlineKeyboardButton(text="➕ Добавить группу", callback_data=AdminPanelCallback(action="group_add", value="0").pack())])
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=AdminPanelCallback(action="back", value="0").pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -78,6 +79,41 @@ def admin_broadcast_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="✖️ Отменить", callback_data=AdminPanelCallback(action="broadcast_cancel", value="0").pack()),
                 InlineKeyboardButton(text="⬅️ Главное меню", callback_data=AdminPanelCallback(action="broadcast_menu", value="0").pack()),
             ]
+        ]
+    )
+
+
+def admin_group_settings_kb(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Выбрать", callback_data=AdminPanelCallback(action="group_select", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="✏️ Изменить", callback_data=AdminPanelCallback(action="group_edit", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data=AdminPanelCallback(action="group_delete", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="➕ Добавить", callback_data=AdminPanelCallback(action="group_add", value="0").pack())],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=AdminPanelCallback(action="group_list", value="0").pack())],
+        ]
+    )
+
+
+def admin_group_edit_kb(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👥 Люди", callback_data=AdminPanelCallback(action="group_edit_users", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="📚 Дисциплины", callback_data=AdminPanelCallback(action="group_edit_subjects", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="👨‍🏫 Преподаватели", callback_data=AdminPanelCallback(action="group_edit_teachers", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="✏️ Название", callback_data=AdminPanelCallback(action="group_rename", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="🏛 Факультет", callback_data=AdminPanelCallback(action="group_change_faculty", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=AdminPanelCallback(action="group_view", value=str(group_id)).pack())],
+        ]
+    )
+
+
+def admin_group_delete_kb(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔔 Удалить и оповестить", callback_data=AdminPanelCallback(action="group_delete_notify", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="🤫 Удалить без уведомления", callback_data=AdminPanelCallback(action="group_delete_silent", value=str(group_id)).pack())],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=AdminPanelCallback(action="group_view", value=str(group_id)).pack())],
         ]
     )
 

@@ -19,6 +19,11 @@ class WorkCallback(CallbackData, prefix="work"):
     number: int
 
 
+class SubjectWorkActionCallback(CallbackData, prefix="subject_work_action"):
+    action: str
+    number: int
+
+
 class StudentCallback(CallbackData, prefix="student"):
     student_id: int
 

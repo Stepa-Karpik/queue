@@ -28,7 +28,7 @@ def get_submission_work_prompt(mode: SubmissionMode) -> str:
         )
     return (
         "Выберите номер работы для отметки:\n"
-        "🟩 — работа уже отмечена.\n"
+        "🟩 — работа уже отмечена, нажатие удалит сдачу.\n"
         "1️⃣ — сдачи нет, нажатие добавит ее."
     )
 
@@ -36,4 +36,4 @@ def get_submission_work_prompt(mode: SubmissionMode) -> str:
 def get_submission_work_action(mode: SubmissionMode, *, is_submitted: bool) -> str:
     if mode == "delete":
         return "delete" if is_submitted else "noop"
-    return "noop" if is_submitted else "add"
+    return "delete" if is_submitted else "add"

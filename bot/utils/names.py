@@ -1,4 +1,9 @@
 ﻿from __future__ import annotations
+import re
+
+
+GROUP_NAME_EXAMPLES = "ВИ23, ВКБ21 или ВИАС33"
+_GROUP_NAME_RE = re.compile(r"^[А-ЯЁ]+\d+$")
 
 
 def normalize_name(value: str) -> str:
@@ -11,6 +16,25 @@ def normalize_compare_text(value: str) -> str:
 
 def normalize_group_name(value: str) -> str:
     return normalize_compare_text(value).upper()
+
+
+def normalize_valid_group_name(value: str) -> str | None:
+    normalized = normalize_group_name(value)
+    if not _GROUP_NAME_RE.fullmatch(normalized):
+        return None
+    return normalized
+
+
+def get_group_validation_error_text() -> str:
+    return f"Неверный формат. Верный: {GROUP_NAME_EXAMPLES}. Введите группу еще раз."
+
+
+def normalize_faculty_name(value: str) -> str:
+    normalized = normalize_compare_text(value).upper()
+    compact = normalized.replace(" ", "")
+    if compact in {"ИВТ", "ИИВТ"}:
+        return "ИИВТ"
+    return normalized
 
 
 def split_full_name(value: str) -> tuple[str, str, str | None]:

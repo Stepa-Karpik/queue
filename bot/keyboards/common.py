@@ -9,6 +9,7 @@ from bot.keyboards.callbacks import (
     ConfirmCallback,
     SortCallback,
     WorkCallback,
+    SubjectWorkActionCallback,
     StudentCallback,
     SubjectCallback,
     ActionCallback,
@@ -141,7 +142,11 @@ def works_kb(numbers: list[int], submitted_numbers: list[int] | set[int] | None 
         row.append(
             InlineKeyboardButton(
                 text="🟩" if is_submitted else keycap_number(num),
-                callback_data=ActionCallback(name="noop").pack() if is_submitted else WorkCallback(number=num).pack(),
+                callback_data=(
+                    SubjectWorkActionCallback(action="delete", number=num).pack()
+                    if is_submitted
+                    else WorkCallback(number=num).pack()
+                ),
             )
         )
         if idx % 5 == 0:

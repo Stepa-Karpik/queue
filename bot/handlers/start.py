@@ -1,4 +1,4 @@
-from aiogram import F, Router
+﻿from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -11,7 +11,15 @@ from bot.services.roster import get_or_create_faculty, get_or_create_group
 from bot.services.students import find_student_by_full_name, find_students_by_last_name, get_student_group
 from bot.services.users import ensure_user, get_user_by_student, get_user_by_tg, is_admin_mode, is_admin_user
 from bot.states.registration import RegistrationStates
-from bot.utils.names import format_full_name, normalize_group_name, normalize_name, split_full_name
+from bot.utils.names import (
+    format_full_name,
+    get_group_validation_error_text,
+    normalize_faculty_name,
+    normalize_group_name,
+    normalize_name,
+    normalize_valid_group_name,
+    split_full_name,
+)
 
 router = Router()
 
@@ -152,20 +160,24 @@ async def self_full_name(message: Message, state: FSMContext):
         )
         return
     await state.update_data(self_last=last, self_first=first, self_middle=middle)
-    await message.answer("Шаг 2 из 3: введите факультет.")
+    await message.answer("Шаг 2 из 3: введите факультет в формате ИиВТ, АМИУ и тд.")
     await state.set_state(RegistrationStates.waiting_self_faculty)
 
 
 @router.message(RegistrationStates.waiting_self_faculty)
 async def self_faculty(message: Message, state: FSMContext):
-    await state.update_data(self_faculty=normalize_name(message.text or ""))
-    await message.answer("Шаг 3 из 3: введите группу.")
+    await state.update_data(self_faculty=normalize_faculty_name(message.text or ""))
+    await message.answer("Шаг 3 из 3: введите группу в формате ВКБ21, ВИАС33, ВИ23 и тд.")
     await state.set_state(RegistrationStates.waiting_self_group)
 
 
 @router.message(RegistrationStates.waiting_self_group)
 async def self_group(message: Message, state: FSMContext):
-    await state.update_data(self_group=normalize_group_name(message.text or ""))
+    group_name = normalize_valid_group_name(message.text or "")
+    if not group_name:
+        await message.answer(get_group_validation_error_text())
+        return
+    await state.update_data(self_group=group_name)
     await message.answer(
         "Вы староста группы?",
         reply_markup=confirm_kb("self_starosta", "yes"),

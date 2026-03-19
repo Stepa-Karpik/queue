@@ -26,6 +26,7 @@ from bot.keyboards.callbacks import (
     ActionCallback,
     SortCallback,
     WorkCallback,
+    SubjectWorkActionCallback,
     StudentCallback,
     PageCallback,
     AdminWorkCallback,
@@ -44,6 +45,7 @@ from bot.services.subjects import (
     create_subject_with_works,
 )
 from bot.services.submissions import (
+    delete_submission,
     list_group_students,
     list_submitted_numbers,
     submissions_map,
@@ -409,6 +411,23 @@ async def mark_work_number(call: CallbackQuery, callback_data: WorkCallback, ses
     await state.set_state(SubjectStates.entering_score)
 
 
+@router.callback_query(SubjectWorkActionCallback.filter(F.action == "delete"))
+async def delete_marked_work(call: CallbackQuery, callback_data: SubjectWorkActionCallback, session: AsyncSession, state: FSMContext):
+    await call.answer()
+    data = await state.get_data()
+    group_subject_id = data.get("group_subject_id")
+    student_id = data.get("mark_for_student")
+    if not all([group_subject_id, student_id]):
+        await call.message.answer("Ошибка состояния. Начните снова.")
+        await state.clear()
+        return
+
+    ok = await delete_submission(session, int(student_id), int(group_subject_id), callback_data.number)
+    if not ok:
+        await call.answer("Сдача уже отменена.", show_alert=True)
+    await refresh_submission_ui(call.message, session, state)
+
+
 @router.message(SubjectStates.entering_score)
 async def enter_score(message: Message, session: AsyncSession, state: FSMContext):
     try:
@@ -722,7 +741,7 @@ async def show_work_selection(message: Message, session: AsyncSession, state: FS
         return
 
     submitted_numbers = await list_submitted_numbers(session, student_id, group_subject_id)
-    text = "Выберите номер работы для отметки:\n🟩 — работа уже отмечена."
+    text = "Выберите номер работы для отметки:\n🟩 — работа уже отмечена, нажатие удалит сдачу."
     reply_markup = works_kb(numbers, submitted_numbers)
     await state.update_data(
         subject_mode="mark",
