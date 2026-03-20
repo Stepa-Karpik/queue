@@ -1,6 +1,8 @@
+from pathlib import Path
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards.callbacks import ScheduleCallback
@@ -29,6 +31,7 @@ from bot.utils.admin_state import cancel_admin_broadcast_flow
 from bot.utils.names import normalize_group_name
 
 router = Router()
+MEDIA_DIR = Path(__file__).resolve().parents[2] / "media"
 
 
 async def _delete_message_by_id(message: Message, message_id: int | None) -> None:
@@ -38,6 +41,15 @@ async def _delete_message_by_id(message: Message, message_id: int | None) -> Non
         await message.bot.delete_message(chat_id=message.chat.id, message_id=message_id)
     except Exception:
         pass
+
+
+def _week_image_path(week_type: ScheduleWeekType) -> Path:
+    filename = "top_week.png" if week_type == ScheduleWeekType.UPPER else "bottom_week.png"
+    return MEDIA_DIR / filename
+
+
+async def _send_week_prompt(message: Message, week_type: ScheduleWeekType, text: str) -> None:
+    await message.answer_photo(FSInputFile(str(_week_image_path(week_type))), caption=text)
 
 
 @router.message(F.text.in_(SCHEDULE_ALIASES))
@@ -136,7 +148,7 @@ async def schedule_callbacks(call: CallbackQuery, callback_data: ScheduleCallbac
             return
         await state.update_data(schedule_group_id=group.id)
         await state.set_state(ScheduleStates.waiting_lower_week_file)
-        await call.message.answer("Отправьте файл нижней недели (.xlsx).")
+        await _send_week_prompt(call.message, ScheduleWeekType.LOWER, "Отправьте файл нижней недели (.xlsx).")
         return
 
     if callback_data.action == "bind":
@@ -257,7 +269,7 @@ async def schedule_callbacks(call: CallbackQuery, callback_data: ScheduleCallbac
 @router.message(ScheduleStates.waiting_lower_week_file)
 async def upload_lower_week(message: Message, state: FSMContext, session: AsyncSession):
     if not message.document or not message.document.file_name or not message.document.file_name.lower().endswith(".xlsx"):
-        await message.answer("Отправьте файл .xlsx нижней недели.")
+        await _send_week_prompt(message, ScheduleWeekType.LOWER, "Отправьте файл .xlsx нижней недели.")
         return
 
     user = await get_user_by_tg(session, message.from_user.id)
@@ -288,13 +300,17 @@ async def upload_lower_week(message: Message, state: FSMContext, session: AsyncS
         uploaded_by_user_id=user.id if user else None,
     )
     await state.set_state(ScheduleStates.waiting_upper_week_file)
-    await message.answer("Нижняя неделя загружена. Теперь отправьте файл верхней недели (.xlsx).")
+    await _send_week_prompt(
+        message,
+        ScheduleWeekType.UPPER,
+        "Нижняя неделя загружена. Теперь отправьте файл верхней недели (.xlsx).",
+    )
 
 
 @router.message(ScheduleStates.waiting_upper_week_file)
 async def upload_upper_week(message: Message, state: FSMContext, session: AsyncSession):
     if not message.document or not message.document.file_name or not message.document.file_name.lower().endswith(".xlsx"):
-        await message.answer("Отправьте файл .xlsx верхней недели.")
+        await _send_week_prompt(message, ScheduleWeekType.UPPER, "Отправьте файл .xlsx верхней недели.")
         return
 
     user = await get_user_by_tg(session, message.from_user.id)
